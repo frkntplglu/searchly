@@ -6,7 +6,7 @@ build:
 run:
 	go run ./cmd/searchly
 
-# Creates the schema from db.sql. Run once against an empty database.
+# Creates the schema from db.sql. Skips if the schema already exists.
 migrate:
 	go run ./cmd/migrate
 
