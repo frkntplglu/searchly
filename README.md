@@ -209,7 +209,7 @@ Böylece her katman somut tipler döndürür, bağımlılıklar hep dıştan iç
 | Tercih | Gerekçe |
 |---|---|
 | **Go** | Tek binary, hızlı başlangıç, düşük bellek. Ingest worker ve HTTP sunucusu gibi eşzamanlı işler için standart kütüphane yeterli. Statik tipler, provider formatlarının güvenli dönüşümünü kolaylaştırıyor. |
-| **Fiber v3** | Günlük kullandığım framework. Hazır `requestid` middleware'i her isteğe loglarda takip için benzersiz bir kimlik veriyor. |
+| **Fiber v3** | Günlük kullandığım framework. Hazır `requestid` middleware'i her isteğe loglarda takip için benzersiz bir kimlik veriyor, `recover` bir handler çökse bile sunucuyu ayakta tutuyor. Merkezi hata yakalayıcısı, bilinmeyen route'ları ve beklenmedik hataları da standart hata formatına çeviriyor. |
 | **PostgreSQL** | Ek bir arama motoruna gerek bırakmayan yerleşik full-text search (`tsvector`, `ts_rank`, GIN index). Tutarlılık için ACID transaction'lar, `ON CONFLICT` upsert, enum ve CHECK constraint'ler. |
 | **pgx (ORM yok)** | Arama sorgusu full-text search, `ts_rank` ve sorgu anında skor hesabı içeriyor. Bunlar bir ORM'de zaten ham SQL'e dönüşürdü. SQL'i doğrudan yazmak, ne çalıştığını görünür kılıyor. Kullanıcı girdisi her zaman parametre olarak gidiyor. |
 | **Tek dosyalık şema (`db.sql`)** | Tek bir tablo var. Versiyonlu bir migration aracı bu aşamada gereksiz karmaşıklık olurdu. `cmd/migrate` şemayı yalnızca yoksa uyguluyor. |
@@ -356,7 +356,7 @@ Testler, en çok hata çıkabilecek yerlere yoğunlaştırıldı:
 | `provider/provider1`, `provider2` | Gerçek mock verinin decode'u ve dönüşümü, bozuk kayıtların atlanması, tarih ve süre dönüşümü, HTTP ve decode hataları | `testdata/` altındaki gerçek mock cevaplar |
 | `ingest` | Bir provider ya da kayıt hatasında diğerlerinin devam etmesi, periyodik çalışma, iptal | Sahte provider ve store |
 | `handler` | Parametre doğrulama, varsayılanlar, yanıt şekli, tek tip hata formatı | Sahte service, `app.Test` |
-| `server` | Panic → 500, 404, dashboard ve dokümantasyon servisi | `app.Test` |
+| `server` | Panic → 500 (panic mesajı kullanıcıya gitmeden), JSON 404, dashboard ve dokümantasyon servisi | `app.Test` |
 | `repository` | Full-text search (kök bulma, yarım kelime, çok kelime, özel karakterler), alakalılık ve popülerlik sıralaması, bütün güncellik eşikleri, upsert, CHECK constraint ihlalinde bütün batch'in geri alınması | **Gerçek PostgreSQL**, şema her testte `db.sql`'den kuruluyor |
 
 - **Repository testleri** `integration` build tag'i arkasında (`make test-integration`). Test edilen şey SQL'in kendisi olduğu için sahteyle test edilemez. Geliştirme veritabanına dokunmamak için ayrı bir `searchly_test` veritabanı kullanıyorlar.

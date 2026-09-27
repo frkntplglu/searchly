@@ -17,6 +17,7 @@ func New(cfg config.Config, contents *handler.ContentHandler) *fiber.App {
 		AppName:      "searchly",
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
+		ErrorHandler: errorHandler,
 	})
 
 	app.Use(requestid.New())
