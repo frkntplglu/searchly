@@ -12,7 +12,10 @@ import (
 
 	"github.com/searchly/internal/config"
 	"github.com/searchly/internal/database"
+	"github.com/searchly/internal/handler"
+	"github.com/searchly/internal/repository"
 	"github.com/searchly/internal/server"
+	"github.com/searchly/internal/service"
 )
 
 func main() {
@@ -29,18 +32,14 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := database.Migrate(cfg.DatabaseURL); err != nil {
-		return err
-	}
-	slog.Info("migrations applied")
-
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	app := server.New(cfg, db)
+	contents := handler.NewContentHandler(service.NewContentService(repository.NewContentRepository(db)))
+	app := server.New(cfg, db, contents)
 	addr := ":" + cfg.Port
 	serverErr := make(chan error, 1)
 	go func() {

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>searchly — İçerik Arama</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="hero">
+    <nav class="nav container">
+      <a class="brand" href="/">searchly</a>
+      <div class="nav-links">
+        <a href="/docs" target="_blank" rel="noopener">API</a>
+      </div>
+    </nav>
+
+    <div class="container hero-body">
+      <h1>Aradığın içeriği bul</h1>
+
+      <form class="search-card" id="search-form" autocomplete="off">
+        <div class="fields">
+          <label class="field">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3a7 7 0 0 1 5.6 11.2l5.1 5.1-1.4 1.4-5.1-5.1A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg>
+            <input id="q" type="search" placeholder="Başlık veya etiket ara (ör. go, docker, devops)" aria-label="Arama">
+          </label>
+          <label class="field select-field">
+            <span class="label">İçerik türü</span>
+            <select id="type">
+              <option value="">Tümü</option>
+              <option value="video">Video</option>
+              <option value="article">Makale</option>
+            </select>
+            <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5z"/></svg>
+          </label>
+          <label class="field select-field">
+            <span class="label">Sırala</span>
+            <select id="sort">
+              <option value="relevance">Alakalılık</option>
+              <option value="popularity">Popülerlik</option>
+            </select>
+            <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5z"/></svg>
+          </label>
+          <button class="primary" type="submit">
+            İçerik bul
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6-1.4-1.4 4.6-4.6-4.6-4.6z"/></svg>
+          </button>
+        </div>
+      </form>
+    </div>
+  </header>
+
+  <main class="container results">
+    <div class="results-head">
+      <h2>İçerikler</h2>
+      <span class="count" id="count"></span>
+      <label class="per-page">
+        Sayfa başına
+        <span class="mini-select">
+          <select id="per-page">
+            <option value="5" selected>5</option>
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+          </select>
+          <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5z"/></svg>
+        </span>
+      </label>
+    </div>
+
+    <div class="table" role="table" aria-label="Arama sonuçları">
+      <div class="row head" role="row">
+        <span role="columnheader">Başlık</span>
+        <span role="columnheader">Tür</span>
+        <span role="columnheader" class="num">Skor</span>
+      </div>
+      <div id="rows" role="rowgroup"></div>
+    </div>
+
+    <p class="message" id="message" hidden></p>
+
+    <nav class="pager" id="pager" aria-label="Sayfalama" hidden>
+      <button type="button" class="ghost" id="prev">‹ Önceki</button>
+      <span id="page-info"></span>
+      <button type="button" class="ghost" id="next">Sonraki ›</button>
+    </nav>
+  </main>
+
+  <template id="row-template">
+    <div class="row" role="row">
+      <div class="title-cell" role="cell">
+        <span class="title"></span>
+        <span class="meta"></span>
+        <span class="tags"></span>
+      </div>
+      <span role="cell"><span class="type"></span></span>
+      <span role="cell" class="num"><span class="score"></span></span>
+    </div>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>

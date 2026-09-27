@@ -24,7 +24,7 @@ func requestLogger(c fiber.Ctx) error {
 		"method", c.Method(),
 		"path", c.Path(),
 		"status", c.Response().StatusCode(),
-		"duration", time.Since(start),
+		"duration_ms", float64(time.Since(start).Microseconds())/1000,
 		"request_id", requestid.FromContext(c),
 	)
 	return nil

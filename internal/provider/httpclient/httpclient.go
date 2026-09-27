@@ -1,6 +1,6 @@
 // Package httpclient fetches a single URL with a per-client rate limit,
 // request timeout and retries for transient failures. It is the HTTP layer
-// shared by jsonprovider and xmlprovider.
+// shared by the provider adapters.
 package httpclient
 
 import (

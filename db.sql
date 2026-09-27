@@ -1,5 +1,11 @@
 CREATE TYPE content_type AS ENUM ('video', 'article');
 
+-- array_to_string is only STABLE, but generated columns require IMMUTABLE
+-- expressions. Joining a TEXT[] with a fixed separator is deterministic.
+CREATE FUNCTION tags_to_text(tags TEXT[]) RETURNS TEXT
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$ SELECT array_to_string(tags, ' ') $$;
+
 CREATE TABLE contents (
     id            BIGSERIAL PRIMARY KEY,
     provider      TEXT NOT NULL,
@@ -17,7 +23,13 @@ CREATE TABLE contents (
     reactions     BIGINT,
     comments      INTEGER,
 
-    raw_payload   JSONB NOT NULL,
+    base_score    DOUBLE PRECISION NOT NULL,
+
+    -- Title matches (weight A) rank above tag matches (weight B).
+    search_vector TSVECTOR GENERATED ALWAYS AS (
+        setweight(to_tsvector('english', title), 'A') ||
+        setweight(to_tsvector('english', tags_to_text(tags)), 'B')
+    ) STORED,
 
     UNIQUE (provider, provider_id),
 
@@ -43,3 +55,5 @@ CREATE TABLE contents (
         )
     )
 );
+
+CREATE INDEX contents_search_idx ON contents USING GIN (search_vector);

@@ -38,7 +38,7 @@ Case study: **Arama Motoru Servisi**. İki farklı provider'dan (JSON + XML) iç
 | HTTP | **Fiber v3** | Günlük kullanılan framework, mülakatta canlı değişiklikte hız. Hazır `requestid`/`recover` middleware'leri, merkezi `ErrorHandler`. |
 | Veritabanı | **PostgreSQL 16** | Tutarlılık (ACID), `UPSERT`, dahili full-text search (`tsvector` + `ts_rank`) ile alakalılık skoru |
 | DB sürücüsü | `jackc/pgx/v5` (ORM yok) | Full-text search ve upsert gibi Postgres özelliklerini doğrudan kullanmak için. Connection pool dahil. |
-| Migration | `golang-migrate/migrate` | Versiyonlu SQL şeması, binary'ye gömülü (`embed`), açılışta otomatik uygulanır |
+| Şema | `db.sql` + `make migrate` | İlk şema tek dosyada, boş DB'de bir kez çalıştırılır. Ek migration aracı yok. |
 | Cache | **Redis** | Arama sonuçlarının cache'i, çoklu instance'ta paylaşımlı |
 | Rate limit | `golang.org/x/time/rate` | Token bucket, provider başına limit |
 | Test | `testing` + `testify` + `testcontainers-go` | Unit + gerçek Postgres ile entegrasyon |
@@ -70,12 +70,13 @@ cmd/searchly/main.go            # wiring: config, db, redis, providers, worker, 
 internal/
   config/                       # env config (DB_URL, REDIS_URL, SYNC_INTERVAL, provider URL'leri, rate limitler)
   model/
-    provider.go                 # provider response modelleri + ToContents() → []model.Content
     content.go                  # model.Content, ContentType, Validate
+    search.go                   # ContentQuery, ContentPage
   provider/
     httpclient/                 # rate limit, timeout, 429/retry; ortak HTTP kodu
-    jsonprovider/               # Client[T]: GET + json.Unmarshal → T
-    xmlprovider/                # Client[T]: GET + xml.Unmarshal → T
+    provider1/                  # adaptör (JSON): Name(), Fetch() → []model.Content
+      provider1.go / dto.go / mapper.go
+    provider2/                  # adaptör (XML): aynı yapı
   scoring/scorer.go             # puanlama formülü (saf fonksiyonlar, %100 test)
   sync/worker.go                # periyodik çek → normalize → puanla → upsert
   repository/postgres/          # ContentRepository implementasyonu
@@ -83,21 +84,29 @@ internal/
   service/search.go             # iş mantığı: cache → repo, validasyon
   handler/                      # HTTP handler'ları, request parse, response DTO, hata mapping
   server/                       # Fiber app, route kaydı + middleware (logging, recover, request-id, CORS, rate limit)
-  database/                     # pgx pool + gömülü migration'lar
+  database/                     # pgx pool + db.sql'i çalıştıran Migrate
   web/                          # dashboard (embed edilen static dosyalar)
 api/openapi.yaml
 docker-compose.yml (kök dizin), Dockerfile
 ```
 
-**Genişletilebilirlik: generic client, modeller ve dönüşüm domain'de**
+**Genişletilebilirlik: her provider bir adaptör**
 
-`jsonprovider.Client[T]` ve `xmlprovider.Client[T]` sadece isteği atar ve cevabın tamamını `T`'ye decode eder. Response modeli ya da domain dönüşümü bilmezler. Response modelleri ve onları `model.Content`'e çeviren `ToContents()` metodları `internal/model`'de durur:
+Her provider kendi paketinde bir adaptör. Response tipleri (`dto.go`) unexported, yani provider'ın wire formatı paketin dışına sızmıyor. Dışarıya sadece `model.Content` çıkıyor. Bağımlılık yönü `provider1 → model`, domain provider'lardan habersiz.
 
 ```go
-resp, err := jsonprovider.New[model.Provider1Response](url, httpclient.Config{...}).Fetch(ctx)
-contents, skipped := resp.ToContents()
+p1 := provider1.New(url, httpclient.Config{...})
+contents, err := p1.Fetch(ctx) // []model.Content
 ```
-Yeni provider = yeni response modeli + `ToContents()` metodu. Generic client'lar değişmez. Özel decode gerekirse (örneğin türe göre değişen `metrics`) modelin kendisi çözer (`json.RawMessage`, `UnmarshalJSON`).
+Provider'ları kullanacak paket (ingest) ihtiyacı kadar küçük bir interface'i kendisi tanımlar:
+
+```go
+type provider interface {
+    Name() string
+    Fetch(ctx context.Context) ([]model.Content, error)
+}
+```
+Yeni provider = yeni adaptör paketi + `main.go`'da listeye bir satır.
 
 ---
 
@@ -246,7 +255,7 @@ Etkileşim  video: (likes/views)*10              text: (reactions/reading_time)*
 
 1. ✅ **Temel altyapı:** config genişletme, Docker Compose (postgres + redis), migration'lar, `/readyz`.
 2. **Puanlama:** `scoring` paketi + kapsamlı unit testler. Ona bağımlı bir şey olmadığı için ilk bitirilecek.
-3. ✅ **Provider'lar:** generic `jsonprovider`/`xmlprovider` client'ları + `httpclient`, `content` tarafında response modelleri ve dönüşümler. (Henüz `main`'e bağlı değil.)
+3. ✅ **Provider'lar:** `httpclient` + `provider1`/`provider2` adaptörleri (mapper'lar henüz boş, `main`'e bağlı değil).
 4. **Repository:** Postgres upsert + arama sorgusu + entegrasyon testleri.
 5. **Sync worker:** periyodik çalıştırma, hata izolasyonu, cache versiyon artırma.
 6. **Search service + API:** handler, validasyon, hata formatı, sayfalama, cache entegrasyonu.

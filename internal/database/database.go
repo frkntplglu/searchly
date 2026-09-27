@@ -2,20 +2,12 @@ package database
 
 import (
 	"context"
-	"embed"
-	"errors"
 	"fmt"
-	"strings"
+	"os"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
 
 // Connect creates a connection pool and verifies the database is reachable.
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
@@ -33,31 +25,15 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Migrate applies all pending up migrations embedded in the binary.
-func Migrate(url string) error {
-	src, err := iofs.New(migrationsFS, "migrations")
+// Migrate executes the SQL file at path. It is meant to be run once against an
+// empty database to create the initial schema.
+func Migrate(ctx context.Context, db *pgxpool.Pool, path string) error {
+	schema, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("load migrations: %w", err)
+		return fmt.Errorf("read schema: %w", err)
 	}
-
-	m, err := migrate.NewWithSourceInstance("iofs", src, toMigrateURL(url))
-	if err != nil {
-		return fmt.Errorf("init migrate: %w", err)
-	}
-	defer m.Close()
-
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("apply migrations: %w", err)
+	if _, err := db.Exec(ctx, string(schema)); err != nil {
+		return fmt.Errorf("apply schema %s: %w", path, err)
 	}
 	return nil
-}
-
-// toMigrateURL rewrites a postgres:// URL to the pgx5:// scheme expected by the migrate driver.
-func toMigrateURL(url string) string {
-	for _, prefix := range []string{"postgres://", "postgresql://"} {
-		if strings.HasPrefix(url, prefix) {
-			return "pgx5://" + strings.TrimPrefix(url, prefix)
-		}
-	}
-	return url
 }

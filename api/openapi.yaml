@@ -1,0 +1,287 @@
+openapi: 3.0.3
+info:
+  title: searchly API
+  version: 1.0.0
+  description: |
+    Content search over items collected from multiple providers.
+
+    Results can be filtered by keyword and content type, sorted by popularity
+    or relevance, and paginated. Every error uses the same `Error` shape.
+
+    **Score** = `(base points × type factor) + recency points + interaction points`.
+    The time-independent part is stored at ingest; recency points are added at
+    query time from the content's age in UTC days (≤7: +5, ≤30: +3, ≤90: +1).
+servers:
+  - url: /
+# The API is public; no operation requires authentication.
+security: []
+tags:
+  - name: contents
+    description: Search the collected contents.
+  - name: health
+    description: Liveness and readiness probes.
+
+paths:
+  /api/v1/contents:
+    get:
+      tags: [contents]
+      summary: Search contents
+      description: |
+        Full-text search over titles and tags. Every word is matched as a prefix
+        ("concur" matches "concurrency") and all words must match. Title matches
+        rank above tag matches, and exact words above prefixes.
+      operationId: searchContents
+      parameters:
+        - name: q
+          in: query
+          description: Keyword. Only letters and digits are used; other characters are ignored.
+          schema:
+            type: string
+          example: go
+        - name: type
+          in: query
+          description: Restrict results to one content type.
+          schema:
+            $ref: '#/components/schemas/ContentType'
+        - name: sort
+          in: query
+          description: |
+            `relevance` orders by keyword match, then score. `popularity` orders by score.
+            Defaults to `relevance` when `q` is given, otherwise `popularity`.
+            Without `q`, `relevance` behaves like `popularity`.
+          schema:
+            type: string
+            enum: [relevance, popularity]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 5
+      responses:
+        '200':
+          description: One page of matching contents.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+              example:
+                data:
+                  - id: 1
+                    provider: provider1
+                    provider_id: v1
+                    type: video
+                    title: Go Programming Tutorial
+                    published_at: '2024-03-15T00:00:00Z'
+                    tags: [programming, tutorial]
+                    score: 41.3
+                    metrics:
+                      views: 15000
+                      likes: 1200
+                      duration_sec: 930
+                  - id: 8
+                    provider: provider2
+                    provider_id: a1
+                    type: article
+                    title: Clean Architecture in Go
+                    published_at: '2024-03-14T00:00:00Z'
+                    tags: [programming, architecture]
+                    score: 298.25
+                    metrics:
+                      reading_time: 8
+                      reactions: 450
+                      comments: 25
+                pagination:
+                  page: 1
+                  per_page: 5
+                  total: 2
+                  total_pages: 1
+        '400':
+          description: Invalid query parameter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_parameter
+                  message: per_page must be between 1 and 100
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness
+      description: The process is running.
+      operationId: health
+      responses:
+        '200':
+          description: Alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+              example:
+                status: ok
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness
+      description: The service can reach its database.
+      operationId: ready
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+              example:
+                status: ready
+        '503':
+          description: The database is not reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_ready
+                  message: database is not reachable
+
+components:
+  responses:
+    InternalError:
+      description: Unexpected error. Details are logged, never returned.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: internal_error
+              message: internal server error
+
+  schemas:
+    ContentType:
+      type: string
+      enum: [video, article]
+
+    SearchResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Content:
+      type: object
+      required: [id, provider, provider_id, type, title, published_at, tags, score, metrics]
+      properties:
+        id:
+          type: integer
+          format: int64
+        provider:
+          type: string
+          description: Provider the content came from.
+          example: provider1
+        provider_id:
+          type: string
+          description: The content's id at its provider. Unique together with `provider`.
+          example: v1
+        type:
+          $ref: '#/components/schemas/ContentType'
+        title:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+          description: Publication date at day precision (always 00:00 UTC).
+        tags:
+          type: array
+          items:
+            type: string
+        score:
+          type: number
+          format: double
+          description: Popularity score including recency points at request time.
+        metrics:
+          description: Shape depends on `type`.
+          oneOf:
+            - $ref: '#/components/schemas/VideoMetrics'
+            - $ref: '#/components/schemas/ArticleMetrics'
+
+    VideoMetrics:
+      type: object
+      required: [views, likes, duration_sec]
+      properties:
+        views:
+          type: integer
+          format: int64
+        likes:
+          type: integer
+          format: int64
+        duration_sec:
+          type: integer
+
+    ArticleMetrics:
+      type: object
+      required: [reading_time, reactions, comments]
+      properties:
+        reading_time:
+          type: integer
+          description: Minutes.
+        reactions:
+          type: integer
+          format: int64
+        comments:
+          type: integer
+          format: int64
+
+    Pagination:
+      type: object
+      required: [page, per_page, total, total_pages]
+      properties:
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+          description: Number of contents matching the query across all pages.
+        total_pages:
+          type: integer
+
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: invalid_parameter
+            message:
+              type: string
