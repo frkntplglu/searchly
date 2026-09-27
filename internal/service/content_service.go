@@ -20,8 +20,6 @@ func NewContentService(repo contentRepository) *ContentService {
 	return &ContentService{repo: repo}
 }
 
-// Upsert validates every content and stores them. Nothing is written if any
-// content is invalid.
 func (s *ContentService) Upsert(ctx context.Context, contents []model.Content) error {
 	for _, c := range contents {
 		if err := c.Validate(); err != nil {
@@ -31,8 +29,6 @@ func (s *ContentService) Upsert(ctx context.Context, contents []model.Content) e
 	return s.repo.Upsert(ctx, contents)
 }
 
-// Search returns one page of contents matching q. q is expected to be
-// validated by the caller (page >= 1, per page > 0).
 func (s *ContentService) Search(ctx context.Context, q model.ContentQuery) (model.ContentPage, error) {
 	contents, total, err := s.repo.Search(ctx, q)
 	if err != nil {

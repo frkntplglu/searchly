@@ -7,12 +7,9 @@ type response struct {
 }
 
 type content struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Type  string `json:"type"`
-	// Metrics has a different shape per type (videoMetrics or articleMetrics),
-	// so it is kept raw and decoded once the type is known. One malformed item
-	// therefore cannot fail the whole response.
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Type        string          `json:"type"`
 	Metrics     json.RawMessage `json:"metrics"`
 	PublishedAt string          `json:"published_at"`
 	Tags        []string        `json:"tags"`

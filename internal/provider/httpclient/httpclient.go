@@ -17,17 +17,11 @@ import (
 const maxBodyBytes = 10 << 20 // 10 MiB
 
 type Config struct {
-	// RequestsPerSecond limits outgoing requests. Zero or negative means unlimited.
 	RequestsPerSecond float64
-	// Limiter, if set, is used instead of RequestsPerSecond. Share one Limiter
-	// between clients that call the same provider so they draw from one budget.
-	Limiter *rate.Limiter
-	// Timeout bounds a single HTTP attempt. Zero means no timeout.
-	Timeout time.Duration
-	// MaxRetries is how many times a transient failure (network error, 5xx, 429) is retried.
-	MaxRetries int
-	// Backoff is the wait before the first retry, doubled on each attempt. Defaults to 500ms.
-	Backoff time.Duration
+	Limiter           *rate.Limiter
+	Timeout           time.Duration
+	MaxRetries        int
+	Backoff           time.Duration
 }
 
 // StatusError is returned when the server responds with a non-200 status.

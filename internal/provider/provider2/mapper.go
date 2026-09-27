@@ -10,8 +10,6 @@ import (
 	"github.com/frkntplglu/searchly/internal/model"
 )
 
-// toContents converts every item. Invalid items are skipped; the returned
-// error joins the reason for each one and is nil when all items converted.
 func (r response) toContents() ([]model.Content, error) {
 	contents := make([]model.Content, 0, len(r.Items))
 	var errs []error
@@ -59,7 +57,6 @@ func (it item) toContent() (model.Content, error) {
 	return c, c.Validate()
 }
 
-// parseDuration converts "mm:ss" or "hh:mm:ss" into seconds.
 func parseDuration(s string) (int, error) {
 	parts := strings.Split(s, ":")
 	if len(parts) < 2 || len(parts) > 3 {

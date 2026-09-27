@@ -49,9 +49,6 @@ type ArticleMetrics struct {
 	Comments    int64
 }
 
-// BaseScore is the time-independent part of the score:
-// (base points * type factor) + interaction points. The recency points depend
-// on the current date, so they are added by the database at query time.
 func (c Content) BaseScore() float64 {
 	var base, interaction float64
 
@@ -82,8 +79,6 @@ func safeRatio(num, den float64) float64 {
 	return num / den
 }
 
-// Validate reports whether the content is complete and exactly the metrics
-// matching its type are set. The metrics are validated by their own Validate.
 func (c Content) Validate() error {
 	return validation.ValidateStruct(&c,
 		validation.Field(&c.Provider, validation.Required),

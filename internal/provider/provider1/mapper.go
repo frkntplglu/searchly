@@ -11,8 +11,6 @@ import (
 	"github.com/frkntplglu/searchly/internal/model"
 )
 
-// toContents converts every item. Invalid items are skipped; the returned
-// error joins the reason for each one and is nil when all items converted.
 func (r response) toContents() ([]model.Content, error) {
 	contents := make([]model.Content, 0, len(r.Contents))
 	var errs []error

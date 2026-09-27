@@ -29,8 +29,6 @@ func New(store store, providers ...provider) *Ingester {
 	return &Ingester{store: store, providers: providers}
 }
 
-// RunOnce fetches every provider and stores its content. A failing provider
-// does not stop the others; the returned error joins every failure.
 func (in *Ingester) RunOnce(ctx context.Context) error {
 	var errs []error
 	for _, p := range in.providers {
@@ -50,9 +48,6 @@ func (in *Ingester) RunOnce(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Run ingests immediately and then every interval until ctx is cancelled.
-// Runs never overlap: the next one starts only after the previous finished.
-// Failures are logged and retried on the next run.
 func (in *Ingester) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

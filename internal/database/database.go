@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Connect creates a connection pool and verifies the database is reachable.
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
@@ -25,8 +24,6 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Migrate executes the SQL file at path. It is meant to be run once against an
-// empty database to create the initial schema.
 func Migrate(ctx context.Context, db *pgxpool.Pool, path string) error {
 	schema, err := os.ReadFile(path)
 	if err != nil {

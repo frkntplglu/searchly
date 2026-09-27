@@ -19,7 +19,6 @@ import (
 	"github.com/frkntplglu/searchly/internal/service"
 )
 
-// runTimeout bounds a single run-once invocation.
 const runTimeout = 2 * time.Minute
 
 func main() {

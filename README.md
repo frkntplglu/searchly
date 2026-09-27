@@ -17,6 +17,7 @@ Farklı içerik sağlayıcılardan (provider) gelen videoları ve makaleleri tek
 - [Teknoloji tercihleri](#teknoloji-tercihleri)
 - [Tasarım kararları](#tasarım-kararları)
 - [Cache önerisi](#cache-önerisi)
+- [Ölçeklenirken ingest: sayfalama ve artımlı senkronizasyon](#ölçeklenirken-ingest-sayfalama-ve-artımlı-senkronizasyon)
 - [Test stratejisi](#test-stratejisi)
 - [To be considered](#to-be-considered)
 
@@ -208,7 +209,7 @@ Böylece her katman somut tipler döndürür, bağımlılıklar hep dıştan iç
 | **golang.org/x/time/rate** | Provider başına token bucket rate limit. Standart ve eşzamanlı kullanıma güvenli. |
 | **log/slog** | Standart kütüphanede, yapılandırılmış JSON loglar. Ek bağımlılık yok. |
 | **Vanilla JS dashboard** | Case basit bir arayüz istiyor. Build adımı ve Node bağımlılığı olmadan binary'ye gömülüyor, aynı porttan servis ediliyor. |
-| **Elle yazılmış OpenAPI + kin-openapi** | Spesifikasyon OpenAPI 3 ile ifade gücünü koruyor (örneğin türe göre değişen `metrics` için `oneOf`). Bir sözleşme testi gerçek yanıtları spesifikasyona karşı doğrulayarak dokümanın koddan kopmasını engelliyor. |
+| **Elle yazılmış OpenAPI** | Tek endpoint'lik bir API için kod üretme aracı gereksiz. Elle yazılan spesifikasyon OpenAPI 3'ün ifade gücünü koruyor, örneğin türe göre değişen `metrics` için `oneOf`. |
 
 ## Tasarım kararları
 
@@ -300,6 +301,42 @@ Cache uygulanmadı. Case bir öneri istiyor, ve mevcut veri boyutunda cache'in f
 4. **Fail-open:** Redis erişilemezse cache atlanır, istek doğrudan veritabanına gider ve bir uyarı loglanır. Cache hiçbir zaman doğruluk kaynağı değildir.
 5. **Yeri:** Service katmanında. Cache interface'i service'te tanımlanır (tüketici tarafı). Handler ve repository değişmez.
 
+## Ölçeklenirken ingest: sayfalama ve artımlı senkronizasyon
+
+Mevcut ingest mock provider'lara göre tasarlandı: tek bir istek, bütün veri, her turda baştan yazma. Gerçek ve büyük bir provider'da iki şeyin değişmesi gerekir.
+
+### Sayfalama
+
+Mock cevaplar sayfalama bilgisi taşıyor (provider1: `pagination.total/page/per_page`, provider2: `meta.total_count/current_page/items_per_page`). Ama `?page=2` isteğine de aynı dört kaydı dönüyorlar. Meta'ya güvenilseydi aynı sayfa 15 kez çekilirdi. Bu yüzden sayfalama uygulanmadı. Gerçek bir provider'da tasarım şöyle olurdu:
+
+- **Sayfaları adaptör dolaşır.** Sayfalama provider'ın formatının bir parçası, bu yüzden adaptörün içinde kalır. Dışarıya yine sadece `model.Content` çıkar.
+- **Sayfa sayfa yazılır.** `Fetch`, bütün veriyi bellekte toplamak yerine sayfaları sırayla verir. Go 1.23'teki range-over-func ile örneğin `iter.Seq2[[]model.Content, error]` olarak. Ingest her sayfayı geldikçe upsert eder. Provider 100 bin kayıt dönse bile bellek kullanımı sabit kalır.
+- **Durma koşulu sadece meta'ya bırakılmaz.** Dönen kayıt sayısı sayfa boyutundan azsa, sayfa boşsa ya da `sayfa × sayfa boyutu ≥ toplam` ise durulur. Ayrıca bir üst sayfa sınırı konur. Mock'taki "her sayfada aynı veri" durumu gibi hatalı davranışlar sonsuz döngüye dönüşmez.
+- **Rate limit kendiliğinden işler.** Sayfa istekleri aynı client'tan geçtiği için limiter zaten provider başına uygulanıyor. Tur süresinin ingest aralığından kısa kalması izlenir: 500 sayfa, 2 istek/sn'de 250 saniye sürer.
+- **Offset yerine cursor tercih edilir.** Provider destekliyorsa (`next_cursor` gibi), sayfalar arasında veri eklenince kayıtların kayması ya da tekrar gelmesi önlenir.
+- **Yarıda kalan tur güvenlidir.** Bir sayfa retry'lara rağmen başarısız olursa o provider'ın turu durur. Yazılmış sayfalar kalır, çünkü upsert tekrar çalıştırılabilir. Tur "eksik" olarak işaretlenir. Aşağıdaki silme tespiti eksik turlarda yapılmaz.
+
+### Full refresh yerine artımlı senkronizasyon
+
+Şu an her tur bütün kayıtları çekip hepsini yeniden yazıyor. Bunun iki sonucu var: değişmemiş satırlar da her 5 dakikada bir güncelleniyor, ve provider'dan silinen bir içerik veritabanında sonsuza kadar kalıyor. Seçilecek yöntem provider'ın ne desteklediğine bağlı:
+
+**1. Full fetch + yerelde fark bulma** (provider değişiklik bilgisi vermiyorsa)
+
+Her turda bütün veri yine çekilir, ama sadece değişenler yazılır:
+
+- Upsert `ON CONFLICT ... DO UPDATE ... WHERE (kolonlar) IS DISTINCT FROM (EXCLUDED.kolonlar)` ile yapılır. Değişmeyen satır yazılmaz, `updated_at` gerçekten değişim zamanını gösterir.
+- Turun başında bir zaman damgası alınır ve görülen her satırın `last_seen_at` alanı güncellenir. Tur **eksiksiz** biterse, o provider'ın bu turda görülmeyen kayıtları silinmiş kabul edilir. Arama dışı bırakılacak şekilde işaretlenir (soft delete) ya da silinir. Eksik bir turda bu yapılmaz, yoksa provider'ın geçici bir hatası bütün verisini sildirebilir.
+- Bedeli: Ağ trafiği azalmaz, her turda bütün veri yine indirilir. Görüntülenme ve beğeni sayıları sürekli değiştiği için, gerçek hayatta satırların önemli bir kısmı zaten her turda değişmiş olabilir.
+- Ucuz bir ek: Provider `ETag` ya da `Last-Modified` dönüyorsa, `If-None-Match` ile gönderilen istek veri değişmediğinde `304` alır ve tur neredeyse bedavaya biter.
+
+**2. Base + provider delta** (provider değişiklik sorgusu destekliyorsa, örneğin `updated_since` ya da bir değişiklik akışı)
+
+- **Delta turları:** Sık yapılır, sadece son başarılı turdan beri değişenleri çeker. Her provider için son başarılı işaret (zaman damgası ya da cursor) bir `sync_state` tablosunda tutulur. Saat farklarına karşı işaret biraz geriden alınır, örneğin 1 dakikalık örtüşmeyle. Aynı kaydın iki kez gelmesi sorun değil, çünkü upsert tekrar çalıştırılabilir.
+- **Base turu:** Seyrek yapılır, örneğin gece bir kez. Bu, yöntem 1'deki gibi eksiksiz bir full fetch'tir. Delta'da kaçan değişiklikleri ve silmeleri düzeltir. Provider silmeleri "tombstone" kaydı olarak bildiriyorsa, silmeler delta'dan da işlenebilir.
+- Bedeli: Provider desteği gerekir ve durum (`sync_state`) yönetimi eklenir. Karşılığında ağ trafiği ve yazma yükü, toplam veri boyutuyla değil değişim miktarıyla orantılı olur.
+
+**Özetle:** Provider değişiklik bilgisi vermiyorsa yöntem 1, veriyorsa yöntem 2. Her iki yöntemde de silme tespiti sadece eksiksiz bir full fetch'e dayanır.
+
 ## Test stratejisi
 
 Testler, en çok hata çıkabilecek yerlere yoğunlaştırıldı:
@@ -311,8 +348,7 @@ Testler, en çok hata çıkabilecek yerlere yoğunlaştırıldı:
 | `provider/provider1`, `provider2` | Gerçek mock verinin decode'u ve dönüşümü, bozuk kayıtların atlanması, tarih ve süre dönüşümü, HTTP ve decode hataları | `testdata/` altındaki gerçek mock cevaplar |
 | `ingest` | Bir provider ya da kayıt hatasında diğerlerinin devam etmesi, periyodik çalışma, iptal | Sahte provider ve store |
 | `handler` | Parametre doğrulama, varsayılanlar, yanıt şekli, tek tip hata formatı | Sahte service, `app.Test` |
-| `server` | Panic → 500, JSON 404, dashboard ve dokümantasyon servisi, önbellek başlıkları | `app.Test` |
-| `server` (sözleşme) | API'nin istekleri ve yanıtları `api/openapi.yaml`'a birebir uyuyor mu. Spesifikasyondaki her endpoint test ediliyor mu. | `kin-openapi` |
+| `server` | Panic → 500, JSON 404, dashboard ve dokümantasyon servisi | `app.Test` |
 | `repository` | Full-text search (kök bulma, yarım kelime, çok kelime, özel karakterler), alakalılık ve popülerlik sıralaması, bütün güncellik eşikleri, upsert, CHECK constraint ihlalinde bütün batch'in geri alınması | **Gerçek PostgreSQL**, şema her testte `db.sql`'den kuruluyor |
 
 - **Repository testleri** `integration` build tag'i arkasında (`make test-integration`). Test edilen şey SQL'in kendisi olduğu için sahteyle test edilemez. Geliştirme veritabanına dokunmamak için ayrı bir `searchly_test` veritabanı kullanıyorlar.
@@ -326,6 +362,5 @@ Bilinen ve bilinçli olarak bırakılmış durumlar:
 - **Stop word'ler sadece yarım kelime olarak eşleşir.** `english` yapılandırması "the", "a" gibi kelimeleri yok sayar. Bu yüzden "the" araması `simple` vektörde "the" ile başlayan kelimeleri ("theory", "them") bulur, "The" kelimesinin kendisini alakalılıkta öne çıkarmaz.
 - **Önek eşleşmesi kısa kelimelerde geniş sonuç verir.** "go" araması "Google" gibi "go" ile başlayan kelimeleri de bulur. Tam eşleşmeler alakalılık sıralamasında önde tutulduğu için bunlar listenin altında kalır.
 - **`or`, `-kelime` ve `"tırnaklı ifade"` sözdizimi desteklenmez.** Önek eşleşmesi için bilinçli olarak bırakıldı. Bu karakterler sıradan ayraç olarak yok sayılır.
-- **Şema değişiklikleri versiyonlanmıyor.** `db.sql` ilk şemayı kuruyor. Mevcut bir veritabanında şema değişikliği gerekirse `make db-reset && make db-up && make migrate && make ingest` ile yeniden kurulmalı. Veriler provider'lardan tekrar çekilebildiği için kayıp yaşanmaz.
 - **Ingest tek instance için tasarlandı.** Worker birden fazla kopya çalıştırılırsa aynı veriyi paralel yazar. Upsert sayesinde veri bozulmaz ama iş tekrarlanır. Gerekirse PostgreSQL advisory lock ile aynı anda tek bir kopyanın çalışması sağlanabilir.
-- **Mock provider'lar sayfalama bilgisi döndürüyor ama tek sayfa servis ediyor.** Sayfalama uygulanmadı. Gerçek bir provider'da adaptörün sayfaları dolaşması gerekir.
+- **Sayfalama ve artımlı ingest uygulanmadı.** Mock provider'lar sayfalama bilgisi döndürüyor ama her sayfa isteğine aynı veriyi dönüyor. Ingest her turda bütün veriyi baştan çekip yazıyor ve provider'dan silinen içerikleri fark etmiyor. Gerçek bir provider için tasarım: [Ölçeklenirken ingest](#ölçeklenirken-ingest-sayfalama-ve-artımlı-senkronizasyon).

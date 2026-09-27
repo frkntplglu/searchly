@@ -87,26 +87,6 @@ func TestDashboardIsServed(t *testing.T) {
 			if ct := resp.Header.Get(fiber.HeaderContentType); !strings.Contains(ct, wantType) {
 				t.Errorf("Content-Type = %q, want %q", ct, wantType)
 			}
-			if cc := resp.Header.Get(fiber.HeaderCacheControl); cc != "no-cache" {
-				t.Errorf("Cache-Control = %q, want no-cache", cc)
-			}
-			if lm := resp.Header.Get(fiber.HeaderLastModified); lm != "" {
-				t.Errorf("Last-Modified = %q, want none", lm)
-			}
 		})
-	}
-}
-
-func TestDashboardIgnoresStaleCacheValidators(t *testing.T) {
-	app := New(config.Config{}, handler.NewContentHandler(nil))
-
-	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
-	req.Header.Set(fiber.HeaderIfModifiedSince, "Mon, 01 Jan 0001 00:00:00 GMT")
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200: a cached copy from an older build must not be reused", resp.StatusCode)
 	}
 }

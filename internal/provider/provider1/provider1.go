@@ -23,8 +23,6 @@ func New(url string, cfg httpclient.Config) *Provider {
 
 func (p *Provider) Name() string { return name }
 
-// Fetch requests the provider and returns its content. Items that cannot be
-// converted are logged and skipped; an error means the whole fetch failed.
 func (p *Provider) Fetch(ctx context.Context) ([]model.Content, error) {
 	body, err := p.http.Get(ctx)
 	if err != nil {

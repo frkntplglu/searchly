@@ -40,8 +40,6 @@ ON CONFLICT (provider, provider_id) DO UPDATE SET
     comments     = EXCLUDED.comments,
     base_score   = EXCLUDED.base_score`
 
-// Upsert inserts the contents or updates the existing rows with the same
-// (provider, provider_id). All rows are written in a single transaction.
 func (r *ContentRepository) Upsert(ctx context.Context, contents []model.Content) error {
 	if len(contents) == 0 {
 		return nil
@@ -96,8 +94,6 @@ const selectContentColumns = `
     reading_time, reactions, comments,
     ` + scoreExpr + ` AS score`
 
-// Search returns one page of contents matching q, in the order requested by
-// q.Sort, and the total number of matching contents.
 func (r *ContentRepository) Search(ctx context.Context, q model.ContentQuery) ([]model.Content, int, error) {
 	where, args := searchFilter(q)
 
@@ -123,13 +119,6 @@ func (r *ContentRepository) Search(ctx context.Context, q model.ContentQuery) ([
 	return contents, total, nil
 }
 
-// searchFilter returns the WHERE clause for q and its arguments. User input is
-// only ever passed as a parameter, never interpolated into the SQL.
-//
-// Every keyword word is matched as a prefix ("concur" finds "concurrency") so
-// results appear while the user is typing. The prefix is matched against the
-// stemmed vector and against the unstemmed one, because a partial word longer
-// than its stem ("concurren", stem "concurr") only matches the unstemmed words.
 func searchFilter(q model.ContentQuery) (string, []any) {
 	var conds []string
 	var args []any
@@ -151,11 +140,6 @@ func searchFilter(q model.ContentQuery) (string, []any) {
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
-// searchOrder returns the ORDER BY clause for q and its arguments, numbered
-// after the n filter arguments. For relevance, exact word matches weigh twice
-// as much as prefix matches, so "go" ranks "Go" above "Google". The prefix
-// score is the better of the two vectors rather than their sum, so a word
-// matching in both is not counted twice.
 func searchOrder(q model.ContentQuery, n int) (string, []any) {
 	prefix, exact := tsQueries(q.Keyword)
 	if q.Sort != model.SortRelevance || prefix == "" {
@@ -168,10 +152,6 @@ func searchOrder(q model.ContentQuery, n int) (string, []any) {
         ) DESC, score DESC, id`, n+1, n+2), []any{exact, prefix}
 }
 
-// tsQueries turns a keyword into to_tsquery input: prefix is "go:* & concur:*"
-// and exact is "go & concur". Only letters and digits are kept, so tsquery
-// operators in the keyword (& | ! : ( ) and so on) cannot break the query.
-// Both are empty when the keyword has no words.
 func tsQueries(keyword string) (prefix, exact string) {
 	words := strings.FieldsFunc(strings.ToLower(keyword), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
@@ -209,7 +189,6 @@ func scanContent(row pgx.CollectableRow) (model.Content, error) {
 	c.Type = model.ContentType(typ)
 	c.PublishedAt = c.PublishedAt.UTC()
 
-	// The table's CHECK constraint guarantees the metric columns match the type.
 	switch c.Type {
 	case model.ContentTypeVideo:
 		c.Video = &model.VideoMetrics{Views: *views, Likes: *likes, DurationSec: *durationSec}
