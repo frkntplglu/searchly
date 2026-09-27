@@ -324,6 +324,16 @@ Mock cevaplar sayfalama bilgisi taşıyor (provider1: `pagination.total/page/per
 - **Offset yerine cursor tercih edilir.** Provider destekliyorsa (`next_cursor` gibi), sayfalar arasında veri eklenince kayıtların kayması ya da tekrar gelmesi önlenir.
 - **Yarıda kalan tur güvenlidir.** Bir sayfa retry'lara rağmen başarısız olursa o provider'ın turu durur. Yazılmış sayfalar kalır, çünkü upsert tekrar çalıştırılabilir. Tur "eksik" olarak işaretlenir. Aşağıdaki silme tespiti eksik turlarda yapılmaz.
 
+### Toplu yazma
+
+Upsert şu an bir provider'ın bütün kayıtlarını tek bir pgx batch'i olarak, tek bir transaction'da yazıyor. Kayıtlar tek bir ağ gidiş-dönüşünde gönderiliyor. Bu, on binlere kadar yeterli. Bir tur çok daha büyük veri getirirse batch parçalara bölünür, örneğin 1.000 kayıtlık gruplar halinde ve her grup kendi transaction'ında:
+
+- Transaction'lar kısa kalır, kilitler uzun süre tutulmaz.
+- Bir kayıttaki hata sadece kendi grubunu geri alır, turun geri kalanı yazılır.
+- Upsert tekrar çalıştırılabilir olduğu için yarıda kalan bir tur güvenle yeniden denenir.
+
+Daha da büyük hacimlerde her kayıt için ayrı ifade yerine tek ifadeli toplu upsert (`unnest` ile dizi parametreleri) ya da `COPY` ile geçici tabloya yükleyip oradan birleştirme kullanılır.
+
 ### Full refresh yerine artımlı senkronizasyon
 
 Şu an her tur bütün kayıtları çekip hepsini yeniden yazıyor. Bunun iki sonucu var: değişmemiş satırlar da her 5 dakikada bir güncelleniyor, ve provider'dan silinen bir içerik veritabanında sonsuza kadar kalıyor. Seçilecek yöntem provider'ın ne desteklediğine bağlı:

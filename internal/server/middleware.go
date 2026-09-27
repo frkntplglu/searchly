@@ -32,6 +32,7 @@ func requestLogger(c fiber.Ctx) error {
 	)
 	return nil
 }
+
 func errorHandler(c fiber.Ctx, err error) error {
 	status, code, message := fiber.StatusInternalServerError, "internal_error", "internal server error"
 
@@ -46,7 +47,6 @@ func errorHandler(c fiber.Ctx, err error) error {
 	return c.Status(status).JSON(model.ErrorResponse{Error: model.ErrorDetail{Code: code, Message: message}})
 }
 
-// logPanic logs a recovered panic with its stack trace.
 func logPanic(c fiber.Ctx, v any) {
 	slog.ErrorContext(c.Context(), "panic recovered",
 		"panic", v,
