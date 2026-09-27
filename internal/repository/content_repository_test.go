@@ -14,8 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/searchly/internal/database"
-	"github.com/searchly/internal/model"
+	"github.com/frkntplglu/searchly/internal/database"
+	"github.com/frkntplglu/searchly/internal/model"
 )
 
 const (

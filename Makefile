@@ -1,4 +1,4 @@
-.PHONY: build run migrate ingest test test-integration tidy lint db-up db-down db-reset db-psql
+.PHONY: build run migrate ingest ingest-worker test test-integration tidy lint db-up db-down db-reset db-psql
 
 build:
 	go build -o bin/searchly ./cmd/searchly
@@ -12,7 +12,11 @@ migrate:
 
 # Fetches every provider once and stores the content.
 ingest:
-	go run ./cmd/ingest
+	go run ./cmd/ingest -interval=0
+
+# Keeps ingesting every 5 minutes until stopped.
+ingest-worker:
+	go run ./cmd/ingest -interval=5m
 
 test:
 	go test ./...
@@ -37,4 +41,4 @@ db-reset:
 	docker compose down -v
 
 db-psql:
-	docker compose exec postgres psql -U searchly -d searchly
+	docker compose exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'

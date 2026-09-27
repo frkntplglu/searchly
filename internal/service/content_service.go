@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/searchly/internal/model"
+	"github.com/frkntplglu/searchly/internal/model"
 )
 
 type contentRepository interface {

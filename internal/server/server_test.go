@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,16 +8,12 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/searchly/internal/config"
-	"github.com/searchly/internal/handler"
+	"github.com/frkntplglu/searchly/internal/config"
+	"github.com/frkntplglu/searchly/internal/handler"
 )
 
-type okPinger struct{}
-
-func (okPinger) Ping(context.Context) error { return nil }
-
 func TestPanicIsRecoveredAs500(t *testing.T) {
-	app := New(config.Config{}, okPinger{}, handler.NewContentHandler(nil))
+	app := New(config.Config{}, handler.NewContentHandler(nil))
 	app.Get("/panic", func(fiber.Ctx) error { panic("boom") })
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/panic", nil))
@@ -34,7 +29,7 @@ func TestPanicIsRecoveredAs500(t *testing.T) {
 }
 
 func TestUnknownRouteReturns404JSON(t *testing.T) {
-	app := New(config.Config{}, okPinger{}, handler.NewContentHandler(nil))
+	app := New(config.Config{}, handler.NewContentHandler(nil))
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 	if err != nil {
@@ -49,7 +44,7 @@ func TestUnknownRouteReturns404JSON(t *testing.T) {
 }
 
 func TestAPIDocsAreServed(t *testing.T) {
-	app := New(config.Config{}, okPinger{}, handler.NewContentHandler(nil))
+	app := New(config.Config{}, handler.NewContentHandler(nil))
 
 	tests := map[string]string{
 		"/openapi.yaml": "application/yaml",
@@ -72,7 +67,7 @@ func TestAPIDocsAreServed(t *testing.T) {
 }
 
 func TestDashboardIsServed(t *testing.T) {
-	app := New(config.Config{}, okPinger{}, handler.NewContentHandler(nil))
+	app := New(config.Config{}, handler.NewContentHandler(nil))
 
 	tests := map[string]string{
 		"/":           "text/html",
@@ -103,7 +98,7 @@ func TestDashboardIsServed(t *testing.T) {
 }
 
 func TestDashboardIgnoresStaleCacheValidators(t *testing.T) {
-	app := New(config.Config{}, okPinger{}, handler.NewContentHandler(nil))
+	app := New(config.Config{}, handler.NewContentHandler(nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
 	req.Header.Set(fiber.HeaderIfModifiedSince, "Mon, 01 Jan 0001 00:00:00 GMT")

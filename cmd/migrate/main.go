@@ -1,15 +1,14 @@
-// Command migrate creates the database schema from db.sql. Run it once against
-// an empty database before starting the service.
 package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 
-	"github.com/searchly/internal/config"
-	"github.com/searchly/internal/database"
+	"github.com/frkntplglu/searchly/internal/config"
+	"github.com/frkntplglu/searchly/internal/database"
 )
 
 func main() {
@@ -20,7 +19,6 @@ func main() {
 		slog.Error("migration failed", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("schema applied", "file", *file)
 }
 
 func run(file string) error {
@@ -31,5 +29,18 @@ func run(file string) error {
 	}
 	defer db.Close()
 
-	return database.Migrate(ctx, db, file)
+	var exists bool
+	if err := db.QueryRow(ctx, "SELECT to_regclass('public.contents') IS NOT NULL").Scan(&exists); err != nil {
+		return fmt.Errorf("check schema: %w", err)
+	}
+	if exists {
+		slog.Info("schema already exists, skipping", "file", file)
+		return nil
+	}
+
+	if err := database.Migrate(ctx, db, file); err != nil {
+		return err
+	}
+	slog.Info("schema applied", "file", file)
+	return nil
 }

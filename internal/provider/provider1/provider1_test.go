@@ -9,7 +9,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/searchly/internal/provider/httpclient"
+	"github.com/frkntplglu/searchly/internal/provider/httpclient"
 )
 
 func readTestdata(t *testing.T) []byte {

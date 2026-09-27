@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/searchly/internal/model"
+	"github.com/frkntplglu/searchly/internal/model"
 )
 
 // toContents converts every item. Invalid items are skipped; the returned

@@ -1,4 +1,4 @@
-module github.com/searchly
+module github.com/frkntplglu/searchly
 
 go 1.26.0
 
@@ -7,6 +7,7 @@ require (
 	github.com/go-ozzo/ozzo-validation/v4 v4.4.1
 	github.com/gofiber/fiber/v3 v3.5.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/joho/godotenv v1.5.1
 	golang.org/x/time v0.16.0
 )
 

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,10 +9,6 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 )
-
-type fakePinger struct{ err error }
-
-func (f fakePinger) Ping(context.Context) error { return f.err }
 
 func newTestApp() *fiber.App {
 	return fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
@@ -28,28 +23,16 @@ func decodeError(t *testing.T, resp *http.Response) apiError {
 	return body.Error
 }
 
-func TestReady(t *testing.T) {
-	tests := []struct {
-		name       string
-		pingErr    error
-		wantStatus int
-	}{
-		{"database reachable", nil, http.StatusOK},
-		{"database down", errors.New("connection refused"), http.StatusServiceUnavailable},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			app := newTestApp()
-			app.Get("/readyz", Ready(fakePinger{err: tt.pingErr}))
+func TestHealth(t *testing.T) {
+	app := newTestApp()
+	app.Get("/health", Health)
 
-			resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/readyz", nil))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if resp.StatusCode != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
-			}
-		})
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/health", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }
 

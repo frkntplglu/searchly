@@ -9,7 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/searchly/internal/model"
+	"github.com/frkntplglu/searchly/internal/model"
 )
 
 const (

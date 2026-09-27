@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/searchly/internal/model"
+	"github.com/frkntplglu/searchly/internal/model"
 )
 
 func TestToContentsSamplePayload(t *testing.T) {

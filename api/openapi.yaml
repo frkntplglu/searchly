@@ -19,7 +19,7 @@ tags:
   - name: contents
     description: Search the collected contents.
   - name: health
-    description: Liveness and readiness probes.
+    description: Health check.
 
 paths:
   /api/v1/contents:
@@ -116,10 +116,10 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /healthz:
+  /health:
     get:
       tags: [health]
-      summary: Liveness
+      summary: Health check
       description: The process is running.
       operationId: health
       responses:
@@ -131,32 +131,6 @@ paths:
                 $ref: '#/components/schemas/Status'
               example:
                 status: ok
-
-  /readyz:
-    get:
-      tags: [health]
-      summary: Readiness
-      description: The service can reach its database.
-      operationId: ready
-      responses:
-        '200':
-          description: Ready to serve traffic.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-              example:
-                status: ready
-        '503':
-          description: The database is not reachable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              example:
-                error:
-                  code: not_ready
-                  message: database is not reachable
 
 components:
   responses:

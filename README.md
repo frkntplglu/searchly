@@ -12,19 +12,30 @@
 | `internal/repository` | Veri erişim katmanı |
 | `api` | OpenAPI spesifikasyonu ve Swagger UI sayfası (binary'ye gömülü) |
 | `internal/dashboard` | Binary'ye gömülü web arayüzü (HTML + vanilla JS), `/` altında servis edilir |
+| `internal/ingest` | Provider'lardan veriyi çekip kaydeden ingest mantığı (tek seferlik ya da periyodik) |
 | `internal/database` | pgx bağlantı havuzu ve gömülü SQL migration'ları |
 | `api` | OpenAPI / proto tanımları |
-| `configs` | Örnek konfigürasyon dosyaları |
-| `scripts` | Yardımcı script'ler |
-| `deployments` | Docker / Kubernetes dosyaları |
-| `test` | Entegrasyon testleri |
-| `docs` | Dokümantasyon |
+
+## Hızlı başlangıç
+
+```sh
+docker compose up -d --build
+```
+
+Bu komut sırasıyla şunları yapar: PostgreSQL'i başlatır, şemayı `db.sql`'den oluşturur (şema zaten varsa atlar), ingest worker'ı (5 dakikada bir) ve API'yi başlatır. Ardından:
+
+- Dashboard: `http://localhost:8080`
+- API dokümantasyonu: `http://localhost:8080/docs`
+
+Ayarlar proje kökündeki `.env` dosyasından okunur. Dosya yoksa varsayılan değerler kullanılır.
 
 ## Komutlar
 
 ```sh
 make db-up    # Postgres'i başlat (localhost:5432)
 make migrate  # şemayı db.sql'den oluştur (boş DB'de bir kez çalıştırılır)
+make ingest   # provider'lardan veriyi bir kez çek ve kaydet
+make ingest-worker  # 5 dakikada bir ingest et (Ctrl+C ile durur)
 make run    # sunucuyu başlat (varsayılan port 8080)
 make build  # bin/searchly üret
 make test   # testleri çalıştır
@@ -37,7 +48,7 @@ API dokümantasyonu: `http://localhost:8080/docs` (Swagger UI). Spesifikasyon `a
 
 Spesifikasyon elle yazılıyor ve bir sözleşme testiyle (`internal/server/openapi_test.go`) koda bağlı tutuluyor: test API'ye gerçek istekler atıp hem istekleri hem yanıtları spesifikasyona karşı doğruluyor, spesifikasyondaki her endpoint'in test edildiğini de kontrol ediyor. Doküman koddan koparsa `make test` kırılır.
 
-Sağlık kontrolü: `curl localhost:8080/healthz` (canlılık), `curl localhost:8080/readyz` (DB erişimi)
+Sağlık kontrolü: `curl localhost:8080/health`
 
 Şema `db.sql` dosyasında. `make migrate` bu dosyayı okuyup veritabanında çalıştırır. İlk kurulumda bir kez çalıştırılması yeterli.
 
@@ -88,6 +99,5 @@ Aramanın bilinen ve bilinçli olarak bırakılmış uç durumları:
 
 - **Kelime içermeyen arama her şeyi döndürür.** Sadece sembollerden oluşan bir arama (`&& !!`) temizlendikten sonra boş kalır ve filtre uygulanmaz. Boş bir aramayla aynı şekilde bütün içerikler listelenir.
 - **Stop word'ler sadece yarım kelime olarak eşleşir.** `english` yapılandırması "the", "a" gibi kelimeleri yok sayar. Bu yüzden "the" araması `simple` vektörde "the" ile başlayan kelimeleri ("theory", "them") bulur, "The" kelimesinin kendisini alakalılıkta öne çıkarmaz.
-- **Yazım hataları tolere edilmez.** "concurency" (eksik harf) hiçbir vektörde eşleşmez. Gerekirse `pg_trgm` ile benzerlik araması eklenebilir.
 - **Önek eşleşmesi kısa kelimelerde geniş sonuç verir.** "go" araması "Google" gibi "go" ile başlayan kelimeleri de bulur. Tam eşleşmeler alakalılık sıralamasında önde tutulduğu için bunlar listenin altında kalır.
 - **`or`, `-kelime` ve `"tırnaklı ifade"` sözdizimi desteklenmez.** Önek eşleşmesi için bilinçli olarak bırakıldı (bkz. "Arama" kararı). Bu karakterler sıradan ayraç olarak yok sayılır.

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/searchly/internal/model"
-	"github.com/searchly/internal/provider/httpclient"
+	"github.com/frkntplglu/searchly/internal/model"
+	"github.com/frkntplglu/searchly/internal/provider/httpclient"
 )
 
 const name = "provider2"

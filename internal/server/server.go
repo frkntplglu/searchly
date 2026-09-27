@@ -6,13 +6,13 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/gofiber/fiber/v3/middleware/static"
 
-	"github.com/searchly/api"
-	"github.com/searchly/internal/config"
-	"github.com/searchly/internal/dashboard"
-	"github.com/searchly/internal/handler"
+	"github.com/frkntplglu/searchly/api"
+	"github.com/frkntplglu/searchly/internal/config"
+	"github.com/frkntplglu/searchly/internal/dashboard"
+	"github.com/frkntplglu/searchly/internal/handler"
 )
 
-func New(cfg config.Config, db handler.Pinger, contents *handler.ContentHandler) *fiber.App {
+func New(cfg config.Config, contents *handler.ContentHandler) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "searchly",
 		ReadTimeout:  cfg.ReadTimeout,
@@ -27,8 +27,7 @@ func New(cfg config.Config, db handler.Pinger, contents *handler.ContentHandler)
 		StackTraceHandler: logPanic,
 	}))
 
-	app.Get("/healthz", handler.Health)
-	app.Get("/readyz", handler.Ready(db))
+	app.Get("/health", handler.Health)
 
 	v1 := app.Group("/api/v1")
 	v1.Get("/contents", contents.Search)

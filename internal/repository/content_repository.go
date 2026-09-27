@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/searchly/internal/model"
+	"github.com/frkntplglu/searchly/internal/model"
 )
 
 type ContentRepository struct {

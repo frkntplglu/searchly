@@ -14,10 +14,10 @@ import (
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers/legacy"
 
-	"github.com/searchly/api"
-	"github.com/searchly/internal/config"
-	"github.com/searchly/internal/handler"
-	"github.com/searchly/internal/model"
+	"github.com/frkntplglu/searchly/api"
+	"github.com/frkntplglu/searchly/internal/config"
+	"github.com/frkntplglu/searchly/internal/handler"
+	"github.com/frkntplglu/searchly/internal/model"
 )
 
 type stubContentService struct {
@@ -29,10 +29,6 @@ func (s stubContentService) Search(_ context.Context, q model.ContentQuery) (mod
 	s.page.Page, s.page.PerPage = q.Page, q.PerPage
 	return s.page, s.err
 }
-
-type stubPinger struct{ err error }
-
-func (p stubPinger) Ping(context.Context) error { return p.err }
 
 var samplePage = model.ContentPage{
 	Total: 2,
@@ -74,28 +70,25 @@ func TestAPIMatchesOpenAPISpec(t *testing.T) {
 		name       string
 		url        string
 		svc        stubContentService
-		db         stubPinger
 		wantStatus int
 		// validRequest is false for requests that deliberately break the spec,
 		// to check the documented error response.
 		validRequest bool
 	}{
-		{"search without params", "/api/v1/contents", stubContentService{page: samplePage}, stubPinger{}, 200, true},
+		{"search without params", "/api/v1/contents", stubContentService{page: samplePage}, 200, true},
 		{"search with every param", "/api/v1/contents?q=go&type=video&sort=relevance&page=2&per_page=10",
-			stubContentService{page: samplePage}, stubPinger{}, 200, true},
-		{"search with no results", "/api/v1/contents?q=rust", stubContentService{}, stubPinger{}, 200, true},
-		{"search with invalid per_page", "/api/v1/contents?per_page=101", stubContentService{}, stubPinger{}, 400, false},
-		{"search with invalid type", "/api/v1/contents?type=podcast", stubContentService{}, stubPinger{}, 400, false},
-		{"search fails", "/api/v1/contents", stubContentService{err: errors.New("db down")}, stubPinger{}, 500, true},
-		{"health", "/healthz", stubContentService{}, stubPinger{}, 200, true},
-		{"ready", "/readyz", stubContentService{}, stubPinger{}, 200, true},
-		{"not ready", "/readyz", stubContentService{}, stubPinger{err: errors.New("down")}, 503, true},
+			stubContentService{page: samplePage}, 200, true},
+		{"search with no results", "/api/v1/contents?q=rust", stubContentService{}, 200, true},
+		{"search with invalid per_page", "/api/v1/contents?per_page=101", stubContentService{}, 400, false},
+		{"search with invalid type", "/api/v1/contents?type=podcast", stubContentService{}, 400, false},
+		{"search fails", "/api/v1/contents", stubContentService{err: errors.New("db down")}, 500, true},
+		{"health", "/health", stubContentService{}, 200, true},
 	}
 
 	covered := map[string]bool{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app := New(config.Config{}, tt.db, handler.NewContentHandler(tt.svc))
+			app := New(config.Config{}, handler.NewContentHandler(tt.svc))
 
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			route, pathParams, err := router.FindRoute(req)

@@ -10,12 +10,12 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/searchly/internal/config"
-	"github.com/searchly/internal/database"
-	"github.com/searchly/internal/handler"
-	"github.com/searchly/internal/repository"
-	"github.com/searchly/internal/server"
-	"github.com/searchly/internal/service"
+	"github.com/frkntplglu/searchly/internal/config"
+	"github.com/frkntplglu/searchly/internal/database"
+	"github.com/frkntplglu/searchly/internal/handler"
+	"github.com/frkntplglu/searchly/internal/repository"
+	"github.com/frkntplglu/searchly/internal/server"
+	"github.com/frkntplglu/searchly/internal/service"
 )
 
 func main() {
@@ -39,7 +39,7 @@ func run() error {
 	defer db.Close()
 
 	contents := handler.NewContentHandler(service.NewContentService(repository.NewContentRepository(db)))
-	app := server.New(cfg, db, contents)
+	app := server.New(cfg, contents)
 	addr := ":" + cfg.Port
 	serverErr := make(chan error, 1)
 	go func() {
