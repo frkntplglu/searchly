@@ -13,12 +13,6 @@ import (
 func requestLogger(c fiber.Ctx) error {
 	start := time.Now()
 	err := c.Next()
-	if err != nil {
-		// Let the app's ErrorHandler write the response so the logged status is final.
-		if handlerErr := c.App().Config().ErrorHandler(c, err); handlerErr != nil {
-			_ = c.SendStatus(fiber.StatusInternalServerError)
-		}
-	}
 
 	slog.InfoContext(c.Context(), "http request",
 		"method", c.Method(),
@@ -27,11 +21,10 @@ func requestLogger(c fiber.Ctx) error {
 		"duration_ms", float64(time.Since(start).Microseconds())/1000,
 		"request_id", requestid.FromContext(c),
 	)
-	return nil
+	return err
 }
 
-// logPanic logs a recovered panic with its stack trace. The panic itself is
-// turned into a 500 response by the recover middleware and ErrorHandler.
+// logPanic logs a recovered panic with its stack trace.
 func logPanic(c fiber.Ctx, v any) {
 	slog.ErrorContext(c.Context(), "panic recovered",
 		"panic", v,

@@ -17,7 +17,6 @@ func New(cfg config.Config, contents *handler.ContentHandler) *fiber.App {
 		AppName:      "searchly",
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
-		ErrorHandler: handler.ErrorHandler,
 	})
 
 	app.Use(requestid.New())
@@ -27,7 +26,9 @@ func New(cfg config.Config, contents *handler.ContentHandler) *fiber.App {
 		StackTraceHandler: logPanic,
 	}))
 
-	app.Get("/health", handler.Health)
+	app.Get("/health", func(c fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ok"})
+	})
 
 	v1 := app.Group("/api/v1")
 	v1.Get("/contents", contents.Search)

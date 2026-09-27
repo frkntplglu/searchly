@@ -3,11 +3,12 @@ package handler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
 
 	"github.com/frkntplglu/searchly/internal/model"
 )
@@ -29,67 +30,22 @@ func NewContentHandler(svc contentService) *ContentHandler {
 	return &ContentHandler{svc: svc}
 }
 
-type searchResponse struct {
-	Data       []contentResponse  `json:"data"`
-	Pagination paginationResponse `json:"pagination"`
-}
-
-type contentResponse struct {
-	ID          int64     `json:"id"`
-	Provider    string    `json:"provider"`
-	ProviderID  string    `json:"provider_id"`
-	Type        string    `json:"type"`
-	Title       string    `json:"title"`
-	PublishedAt time.Time `json:"published_at"`
-	Tags        []string  `json:"tags"`
-	Score       float64   `json:"score"`
-	Metrics     any       `json:"metrics"`
-}
-
-type videoMetricsResponse struct {
-	Views       int64 `json:"views"`
-	Likes       int64 `json:"likes"`
-	DurationSec int   `json:"duration_sec"`
-}
-
-type articleMetricsResponse struct {
-	ReadingTime int   `json:"reading_time"`
-	Reactions   int64 `json:"reactions"`
-	Comments    int64 `json:"comments"`
-}
-
-type paginationResponse struct {
-	Page       int `json:"page"`
-	PerPage    int `json:"per_page"`
-	Total      int `json:"total"`
-	TotalPages int `json:"total_pages"`
-}
-
-// Search handles GET /api/v1/contents?q=&type=&sort=&page=&per_page=.
 func (h *ContentHandler) Search(c fiber.Ctx) error {
 	q, err := parseContentQuery(c)
 	if err != nil {
-		return WriteError(c, fiber.StatusBadRequest, "invalid_parameter", err.Error())
+		return handleError(c, fiber.StatusBadRequest, "invalid_parameter", err.Error())
 	}
 
 	page, err := h.svc.Search(c.Context(), q)
 	if err != nil {
-		return err
+		slog.ErrorContext(c.Context(), "search contents failed",
+			"err", err,
+			"request_id", requestid.FromContext(c),
+		)
+		return handleError(c, fiber.StatusInternalServerError, "internal_error", "internal server error")
 	}
 
-	resp := searchResponse{
-		Data: make([]contentResponse, 0, len(page.Contents)),
-		Pagination: paginationResponse{
-			Page:       page.Page,
-			PerPage:    page.PerPage,
-			Total:      page.Total,
-			TotalPages: page.TotalPages(),
-		},
-	}
-	for _, content := range page.Contents {
-		resp.Data = append(resp.Data, toContentResponse(content))
-	}
-	return c.JSON(resp)
+	return handleSuccess(c, model.NewContentResponses(page.Contents), model.NewPagination(page))
 }
 
 func parseContentQuery(c fiber.Ctx) (model.ContentQuery, error) {
@@ -134,27 +90,4 @@ func parseContentQuery(c fiber.Ctx) (model.ContentQuery, error) {
 		q.PerPage = n
 	}
 	return q, nil
-}
-
-func toContentResponse(c model.Content) contentResponse {
-	resp := contentResponse{
-		ID:          c.ID,
-		Provider:    c.Provider,
-		ProviderID:  c.ProviderID,
-		Type:        string(c.Type),
-		Title:       c.Title,
-		PublishedAt: c.PublishedAt,
-		Tags:        c.Tags,
-		Score:       c.Score,
-	}
-	if resp.Tags == nil {
-		resp.Tags = []string{}
-	}
-	switch {
-	case c.Video != nil:
-		resp.Metrics = videoMetricsResponse{Views: c.Video.Views, Likes: c.Video.Likes, DurationSec: c.Video.DurationSec}
-	case c.Article != nil:
-		resp.Metrics = articleMetricsResponse{ReadingTime: c.Article.ReadingTime, Reactions: c.Article.Reactions, Comments: c.Article.Comments}
-	}
-	return resp
 }

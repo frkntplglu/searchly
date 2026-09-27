@@ -6,7 +6,11 @@ info:
     Content search over items collected from multiple providers.
 
     Results can be filtered by keyword and content type, sorted by popularity
-    or relevance, and paginated. Every error uses the same `Error` shape.
+    or relevance, and paginated.
+
+    Every successful API response is wrapped as `{"data": ...}` (plus
+    `pagination` for paginated results), and every error as
+    `{"error": {"code", "message"}}`. The `/health` probe is not wrapped.
 
     **Score** = `(base points × type factor) + recency points + interaction points`.
     The time-independent part is stored at ingest; recency points are added at

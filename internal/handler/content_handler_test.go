@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +27,7 @@ func (f *fakeContentService) Search(_ context.Context, q model.ContentQuery) (mo
 }
 
 func newContentApp(svc contentService) *fiber.App {
-	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
+	app := fiber.New()
 	app.Get("/api/v1/contents", NewContentHandler(svc).Search)
 	return app
 }
@@ -80,7 +81,7 @@ func TestSearchRejectsInvalidParams(t *testing.T) {
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400", resp.StatusCode)
 			}
-			var body errorBody
+			var body model.ErrorResponse
 			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.Error.Code != "invalid_parameter" {
 				t.Errorf("unexpected body: %+v, %v", body, err)
 			}
@@ -118,7 +119,7 @@ func TestSearchResponse(t *testing.T) {
 			Tags    []string       `json:"tags"`
 			Metrics map[string]any `json:"metrics"`
 		} `json:"data"`
-		Pagination paginationResponse `json:"pagination"`
+		Pagination model.Pagination `json:"pagination"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -139,7 +140,7 @@ func TestSearchResponse(t *testing.T) {
 	if body.Data[1].Tags == nil {
 		t.Error("tags must be an empty array, not null")
 	}
-	if body.Pagination != (paginationResponse{Page: 1, PerPage: 20, Total: 2, TotalPages: 1}) {
+	if body.Pagination != (model.Pagination{Page: 1, PerPage: 20, Total: 2, TotalPages: 1}) {
 		t.Errorf("pagination = %+v", body.Pagination)
 	}
 }
@@ -152,5 +153,9 @@ func TestSearchServiceErrorIs500(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != `{"error":{"code":"internal_error","message":"internal server error"}}` {
+		t.Errorf("body = %s; the cause must be logged, not returned", body)
 	}
 }

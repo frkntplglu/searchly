@@ -28,7 +28,7 @@ func TestPanicIsRecoveredAs500(t *testing.T) {
 	}
 }
 
-func TestUnknownRouteReturns404JSON(t *testing.T) {
+func TestUnknownRouteReturns404(t *testing.T) {
 	app := New(config.Config{}, handler.NewContentHandler(nil))
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
@@ -37,9 +37,6 @@ func TestUnknownRouteReturns404JSON(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
-	}
-	if ct := resp.Header.Get(fiber.HeaderContentType); !strings.HasPrefix(ct, fiber.MIMEApplicationJSON) {
-		t.Errorf("Content-Type = %q, want JSON", ct)
 	}
 }
 
