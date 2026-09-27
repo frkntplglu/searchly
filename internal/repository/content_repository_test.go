@@ -192,6 +192,9 @@ func TestSearch(t *testing.T) {
 		// exact title (v1) > exact tag (a1) > prefix-only title "Google" (v2)
 		{"exact matches outrank prefix matches", model.ContentQuery{Keyword: "go", Sort: rel}, []string{"v1", "a1", "v2"}, 3},
 		{"partial word", model.ContentQuery{Keyword: "concur", Sort: rel}, []string{"v1"}, 1},
+		// "concurrency" is stemmed to "concurr"; these are longer than the stem.
+		{"partial word longer than the stem", model.ContentQuery{Keyword: "concurren", Sort: rel}, []string{"v1"}, 1},
+		{"partial tag longer than the stem", model.ContentQuery{Keyword: "programmin", Sort: rel}, []string{"v1"}, 1},
 		{"partial word inside a longer word", model.ContentQuery{Keyword: "goo", Sort: rel}, []string{"v2"}, 1},
 		{"tag match", model.ContentQuery{Keyword: "devops", Sort: rel}, []string{"v2"}, 1},
 		{"stemming: pattern matches Patterns", model.ContentQuery{Keyword: "pattern", Sort: rel}, []string{"v1"}, 1},
@@ -200,7 +203,6 @@ func TestSearch(t *testing.T) {
 		{"all words must match", model.ContentQuery{Keyword: "go concur", Sort: rel}, []string{"v1"}, 1},
 		{"no content has every word", model.ContentQuery{Keyword: "clean testing", Sort: rel}, nil, 0},
 		{"tsquery operators are ignored", model.ContentQuery{Keyword: "go & | ( ! :*", Sort: rel}, []string{"v1", "a1", "v2"}, 3},
-		{"only stop words match nothing", model.ContentQuery{Keyword: "the", Sort: rel}, nil, 0},
 
 		{"keyword and type", model.ContentQuery{Keyword: "go", Type: model.ContentTypeArticle, Sort: rel}, []string{"a1"}, 1},
 		{"type only", model.ContentQuery{Type: model.ContentTypeVideo, Sort: pop}, []string{"v1", "v2"}, 2},

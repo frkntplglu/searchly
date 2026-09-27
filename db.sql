@@ -31,6 +31,13 @@ CREATE TABLE contents (
         setweight(to_tsvector('english', tags_to_text(tags)), 'B')
     ) STORED,
 
+    -- The same words without stemming, so a partial word longer than its stem
+    -- still matches as a prefix ("concurren" -> "concurrency", stem "concurr").
+    search_vector_simple TSVECTOR GENERATED ALWAYS AS (
+        setweight(to_tsvector('simple', title), 'A') ||
+        setweight(to_tsvector('simple', tags_to_text(tags)), 'B')
+    ) STORED,
+
     UNIQUE (provider, provider_id),
 
     CONSTRAINT metrics_match_type CHECK (
@@ -57,3 +64,4 @@ CREATE TABLE contents (
 );
 
 CREATE INDEX contents_search_idx ON contents USING GIN (search_vector);
+CREATE INDEX contents_search_simple_idx ON contents USING GIN (search_vector_simple);

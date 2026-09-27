@@ -69,10 +69,15 @@ Böylece skor her an doğru olur ve zamanlanmış bir işe ihtiyaç duyulmaz. Be
 
 ### Arama: full-text search, önek eşleşmesi ve alakalılık
 
-Arama, PostgreSQL full-text search ile yapılıyor. `search_vector` kolonu başlık (ağırlık `A`) ve etiketlerden (ağırlık `B`) otomatik üretiliyor ve GIN index'li. `english` yapılandırması sayesinde kök bulma çalışıyor ("tips" → "Tips", "pattern" → "Patterns").
+Arama, PostgreSQL full-text search ile yapılıyor. Başlık (ağırlık `A`) ve etiketlerden (ağırlık `B`) iki vektör otomatik üretiliyor, ikisi de GIN index'li:
+
+- `search_vector` (`english`): kelimeler köklerine indirilir, böylece "tips" → "Tips", "pattern" → "Patterns" eşleşir.
+- `search_vector_simple` (`simple`): kelimeler olduğu gibi saklanır. Kökünden uzun yarım kelimeler ("concurren" → "concurrency", kökü `concurr`) buradan eşleşir.
+
+Bir içerik iki vektörden birinde eşleşirse sonuçlara girer.
 
 - **Önek eşleşmesi:** Aranan her kelime önek olarak eşleşiyor ("concur" → "concurrency"). Böylece kullanıcı yazarken sonuç görüyor. Birden fazla kelime yazılırsa hepsinin geçmesi gerekiyor.
-- **Alakalılık:** `sort=relevance` (kelime verildiğinde varsayılan) sonuçları `ts_rank` ile sıralıyor. Tam kelime eşleşmesi önek eşleşmesinden iki kat değerli sayılıyor, böylece "go" aramasında "Go" geçen içerik "Google" geçenin üstünde çıkıyor. Başlıktaki eşleşme etiketteki eşleşmeden daha değerli. Eşitlikte skor belirliyor.
+- **Alakalılık:** `sort=relevance` (kelime verildiğinde varsayılan) sonuçları `ts_rank` ile sıralıyor. Tam kelime eşleşmesi önek eşleşmesinden iki kat değerli sayılıyor, böylece "go" aramasında "Go" geçen içerik "Google" geçenin üstünde çıkıyor. Önek puanı iki vektörden yüksek olanı alınarak hesaplanıyor. Toplanmıyor, çünkü toplansaydı iki vektörde birden eşleşen yarım kelimeler çift puan alırdı. Başlıktaki eşleşme etiketteki eşleşmeden daha değerli. Eşitlikte skor belirliyor.
 - **Popülerlik:** `sort=popularity` sonuçları skora göre sıralıyor.
 
 **Bilinçli takas:** PostgreSQL'in `websearch_to_tsquery` fonksiyonu `or`, `-kelime` ve `"tırnaklı ifade"` sözdizimini destekliyor ama önek eşleşmesini desteklemiyor. Yazarken arama, bu ileri seviye sözdiziminden daha değerli görüldü. Sorgu Go'da kuruluyor: girdiden sadece harf ve rakamlar alınıyor, böylece özel karakterler sorguyu bozamıyor. Sorgu her zaman parametre olarak gönderiliyor.
@@ -82,16 +87,7 @@ Arama, PostgreSQL full-text search ile yapılıyor. `search_vector` kolonu başl
 Aramanın bilinen ve bilinçli olarak bırakılmış uç durumları:
 
 - **Kelime içermeyen arama her şeyi döndürür.** Sadece sembollerden oluşan bir arama (`&& !!`) temizlendikten sonra boş kalır ve filtre uygulanmaz. Boş bir aramayla aynı şekilde bütün içerikler listelenir.
-- **Sadece stop word'lerden oluşan arama boş döner.** `english` yapılandırması "the", "a", "and" gibi kelimeleri yok sayar. Bu kelimelerle yapılan bir arama hiç sonuç vermez. Başka kelimelerle birlikte yazıldıklarında sorun çıkmaz ("the go" → "go").
-- **Bazı yarım kelimeler kök bulma yüzünden eşleşmez.** İçerikteki kelimeler köklerine indirilerek saklanır ("programming" → `program`, "concurrency" → `concurr`). Yazılan yarım kelime bu kökten uzunsa eşleşme olmaz:
-
-  | Aranan | İçerikteki kelime (kök) | Sonuç |
-  |---|---|---|
-  | `progra` | Programming (`program`) | ✅ |
-  | `programmin` | Programming (`program`) | ❌ |
-  | `concur` | Concurrency (`concurr`) | ✅ |
-  | `concurren` | Concurrency (`concurr`) | ❌ |
-
-  Kelime tamamlandığında tekrar eşleşir. Tamamen çözmek için `simple` yapılandırmasıyla (kök bulmadan) ikinci bir vektör ya da `pg_trgm` ile benzerlik araması eklenebilir.
+- **Stop word'ler sadece yarım kelime olarak eşleşir.** `english` yapılandırması "the", "a" gibi kelimeleri yok sayar. Bu yüzden "the" araması `simple` vektörde "the" ile başlayan kelimeleri ("theory", "them") bulur, "The" kelimesinin kendisini alakalılıkta öne çıkarmaz.
+- **Yazım hataları tolere edilmez.** "concurency" (eksik harf) hiçbir vektörde eşleşmez. Gerekirse `pg_trgm` ile benzerlik araması eklenebilir.
 - **Önek eşleşmesi kısa kelimelerde geniş sonuç verir.** "go" araması "Google" gibi "go" ile başlayan kelimeleri de bulur. Tam eşleşmeler alakalılık sıralamasında önde tutulduğu için bunlar listenin altında kalır.
 - **`or`, `-kelime` ve `"tırnaklı ifade"` sözdizimi desteklenmez.** Önek eşleşmesi için bilinçli olarak bırakıldı (bkz. "Arama" kararı). Bu karakterler sıradan ayraç olarak yok sayılır.

@@ -127,14 +127,18 @@ func (r *ContentRepository) Search(ctx context.Context, q model.ContentQuery) ([
 // only ever passed as a parameter, never interpolated into the SQL.
 //
 // Every keyword word is matched as a prefix ("concur" finds "concurrency") so
-// results appear while the user is typing.
+// results appear while the user is typing. The prefix is matched against the
+// stemmed vector and against the unstemmed one, because a partial word longer
+// than its stem ("concurren", stem "concurr") only matches the unstemmed words.
 func searchFilter(q model.ContentQuery) (string, []any) {
 	var conds []string
 	var args []any
 
 	if prefix, _ := tsQueries(q.Keyword); prefix != "" {
 		args = append(args, prefix)
-		conds = append(conds, fmt.Sprintf("search_vector @@ to_tsquery('english', $%d)", len(args)))
+		n := len(args)
+		conds = append(conds, fmt.Sprintf(
+			"(search_vector @@ to_tsquery('english', $%d) OR search_vector_simple @@ to_tsquery('simple', $%d))", n, n))
 	}
 	if q.Type != "" {
 		args = append(args, string(q.Type))
@@ -149,15 +153,19 @@ func searchFilter(q model.ContentQuery) (string, []any) {
 
 // searchOrder returns the ORDER BY clause for q and its arguments, numbered
 // after the n filter arguments. For relevance, exact word matches weigh twice
-// as much as prefix matches, so "go" ranks "Go" above "Google".
+// as much as prefix matches, so "go" ranks "Go" above "Google". The prefix
+// score is the better of the two vectors rather than their sum, so a word
+// matching in both is not counted twice.
 func searchOrder(q model.ContentQuery, n int) (string, []any) {
 	prefix, exact := tsQueries(q.Keyword)
 	if q.Sort != model.SortRelevance || prefix == "" {
 		return "score DESC, id", nil
 	}
-	return fmt.Sprintf(
-		"ts_rank(search_vector, to_tsquery('english', $%d)) * 2 + ts_rank(search_vector, to_tsquery('english', $%d)) DESC, score DESC, id",
-		n+1, n+2), []any{exact, prefix}
+	return fmt.Sprintf(`ts_rank(search_vector, to_tsquery('english', $%[1]d)) * 2
+        + GREATEST(
+            ts_rank(search_vector, to_tsquery('english', $%[2]d)),
+            ts_rank(search_vector_simple, to_tsquery('simple', $%[2]d))
+        ) DESC, score DESC, id`, n+1, n+2), []any{exact, prefix}
 }
 
 // tsQueries turns a keyword into to_tsquery input: prefix is "go:* & concur:*"
