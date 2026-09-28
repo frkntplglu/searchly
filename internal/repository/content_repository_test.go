@@ -24,7 +24,7 @@ const (
 )
 
 // newTestDB returns a pool to an empty searchly_test database with the schema
-// from db.sql, creating the database if needed. The development database is never touched.
+// from the migrations, creating the database if needed. The development database is never touched.
 func newTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
@@ -53,11 +53,11 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 
-	// Recreate the schema from db.sql so every test starts from the real, empty schema.
+	// Recreate the schema from the migrations so every test starts from the real, empty schema.
 	if _, err := pool.Exec(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
-	if err := database.Migrate(ctx, pool, "../../db.sql"); err != nil {
+	if err := database.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return pool

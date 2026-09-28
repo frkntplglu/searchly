@@ -12,6 +12,5 @@ RUN for cmd in searchly ingest migrate; do \
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/ /app/
-COPY db.sql /app/db.sql
 EXPOSE 8080
 CMD ["/app/searchly"]

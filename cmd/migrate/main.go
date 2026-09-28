@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -12,16 +10,13 @@ import (
 )
 
 func main() {
-	file := flag.String("file", "db.sql", "path to the schema file")
-	flag.Parse()
-
-	if err := run(*file); err != nil {
+	if err := run(); err != nil {
 		slog.Error("migration failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(file string) error {
+func run() error {
 	ctx := context.Background()
 	db, err := database.Connect(ctx, config.Load().DatabaseURL)
 	if err != nil {
@@ -29,18 +24,9 @@ func run(file string) error {
 	}
 	defer db.Close()
 
-	var exists bool
-	if err := db.QueryRow(ctx, "SELECT to_regclass('public.contents') IS NOT NULL").Scan(&exists); err != nil {
-		return fmt.Errorf("check schema: %w", err)
-	}
-	if exists {
-		slog.Info("schema already exists, skipping", "file", file)
-		return nil
-	}
-
-	if err := database.Migrate(ctx, db, file); err != nil {
+	if err := database.Migrate(ctx, db); err != nil {
 		return err
 	}
-	slog.Info("schema applied", "file", file)
+	slog.Info("database is up to date")
 	return nil
 }

@@ -3,10 +3,15 @@ package database
 import (
 	"context"
 	"fmt"
-	"os"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
+
+	"github.com/frkntplglu/searchly/migrations"
 )
 
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
@@ -24,13 +29,28 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func Migrate(ctx context.Context, db *pgxpool.Pool, path string) error {
-	schema, err := os.ReadFile(path)
+// Migrate applies the migrations that have not been applied yet, in order.
+// Applied versions are recorded in goose_db_version. A Postgres advisory lock
+// makes concurrent callers wait, so only one of them applies each migration.
+func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	db := stdlib.OpenDBFromPool(pool) // closing it leaves the pool open
+	defer db.Close()
+
+	locker, err := lock.NewPostgresSessionLocker()
 	if err != nil {
-		return fmt.Errorf("read schema: %w", err)
+		return fmt.Errorf("create migration lock: %w", err)
 	}
-	if _, err := db.Exec(ctx, string(schema)); err != nil {
-		return fmt.Errorf("apply schema %s: %w", path, err)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS, goose.WithSessionLocker(locker))
+	if err != nil {
+		return fmt.Errorf("load migrations: %w", err)
+	}
+	results, err := provider.Up(ctx)
+	if err != nil {
+		return fmt.Errorf("apply migrations: %w", err)
+	}
+	for _, r := range results {
+		slog.InfoContext(ctx, "migration applied", "version", r.Source.Version, "file", r.Source.Path,
+			"duration_ms", float64(r.Duration.Microseconds())/1000)
 	}
 	return nil
 }

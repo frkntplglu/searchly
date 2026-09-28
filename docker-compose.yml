@@ -28,7 +28,7 @@ services:
 
   migrate:
     <<: *app
-    command: ["/app/migrate", "-file", "/app/db.sql"]
+    command: ["/app/migrate"]
     depends_on:
       postgres:
         condition: service_healthy
