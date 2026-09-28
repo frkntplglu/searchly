@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -65,14 +66,25 @@ func New(url string, cfg Config) *Client {
 }
 
 // Get returns the response body of the configured URL.
-func (c *Client) Get(ctx context.Context) ([]byte, error) {
+func (c *Client) Get(ctx context.Context, query url.Values) ([]byte, error) {
+	u, err := url.Parse(c.url)
+	if err != nil {
+		return nil, fmt.Errorf("parse url: %w", err)
+	}
+	q := u.Query()
+	for k, vs := range query {
+		q[k] = vs
+	}
+	u.RawQuery = q.Encode()
+	target := u.String()
+
 	wait := c.backoff
 	for attempt := 0; ; attempt++ {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, err
 		}
 
-		body, retryAfter, err := c.do(ctx)
+		body, retryAfter, err := c.do(ctx, target)
 		if err == nil {
 			return body, nil
 		}
@@ -94,8 +106,8 @@ func (c *Client) Get(ctx context.Context) ([]byte, error) {
 
 // do performs a single request. retryAfter is negative when the failure is not
 // worth retrying, zero to use the default backoff, or the server-requested delay.
-func (c *Client) do(ctx context.Context) (body []byte, retryAfter time.Duration, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
+func (c *Client) do(ctx context.Context, target string) (body []byte, retryAfter time.Duration, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -111,10 +123,10 @@ func (c *Client) do(ctx context.Context) (body []byte, retryAfter time.Duration,
 		return body, 0, err
 	case resp.StatusCode == http.StatusTooManyRequests:
 		secs, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
-		return nil, time.Duration(secs) * time.Second, &StatusError{URL: c.url, StatusCode: resp.StatusCode}
+		return nil, time.Duration(secs) * time.Second, &StatusError{URL: target, StatusCode: resp.StatusCode}
 	case resp.StatusCode >= 500:
-		return nil, 0, &StatusError{URL: c.url, StatusCode: resp.StatusCode}
+		return nil, 0, &StatusError{URL: target, StatusCode: resp.StatusCode}
 	default:
-		return nil, -1, &StatusError{URL: c.url, StatusCode: resp.StatusCode}
+		return nil, -1, &StatusError{URL: target, StatusCode: resp.StatusCode}
 	}
 }

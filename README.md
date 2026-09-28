@@ -32,7 +32,7 @@ docker compose up -d --build
 Bu komut sırasıyla:
 
 1. PostgreSQL'i başlatır ve sağlıklı olmasını bekler.
-2. Şemayı `db.sql`'den oluşturur. Şema zaten varsa bu adımı atlar, yani komut tekrar tekrar çalıştırılabilir.
+2. Henüz uygulanmamış migration'ları uygular ([Migration'lar](#migrationlar)). Hepsi uygulanmışsa bir şey yapmaz, yani komut tekrar tekrar çalıştırılabilir.
 3. Ingest worker'ı başlatır: provider'lardan veriyi hemen çeker, sonra 5 dakikada bir tekrarlar. Worker'dan birden fazla kopya çalıştırılabilir: `docker compose up -d --scale ingest=3` ([Birden fazla ingest worker](#birden-fazla-ingest-worker)).
 4. API'yi başlatır.
 
@@ -55,7 +55,7 @@ Gereksinim: Go 1.26, Docker (sadece PostgreSQL için).
 
 ```sh
 make db-up          # PostgreSQL'i başlat (localhost:5432)
-make migrate        # şemayı db.sql'den oluştur (şema varsa atlar)
+make migrate        # bekleyen migration'ları uygula
 make ingest         # provider'lardan veriyi bir kez çek ve kaydet
 make run            # API + dashboard (localhost:8080)
 ```
@@ -187,10 +187,12 @@ Veri akışı iki ayrı process'e bölünmüş durumda:
 |---|---|
 | `cmd/searchly` | API sunucusu: bağımlılıkları kurar, düzgün kapanmayı yönetir |
 | `cmd/ingest` | Ingest: bir kez ya da `-interval` ile periyodik çalışır |
-| `cmd/migrate` | Şemayı `db.sql`'den oluşturur |
+| `cmd/migrate` | Bekleyen migration'ları uygular |
+| `migrations` | SQL migration dosyaları (binary'ye gömülü) |
 | `api` | OpenAPI spesifikasyonu ve Swagger UI sayfası (binary'ye gömülü) |
 | `internal/model` | Provider'dan bağımsız `Content` modeli, doğrulama ve puan hesabı |
 | `internal/provider/httpclient` | Provider'lar için ortak HTTP: rate limit, timeout, retry |
+| `internal/provider/paging` | Sayfaları dolaşma ve durma kuralları |
 | `internal/provider/provider1`, `provider2` | Provider adaptörleri: istek, decode, `model.Content`'e dönüşüm |
 | `internal/ingest` | Provider'ları işler. Biri hata verirse diğerleri devam eder. Worker modunda provider'ları `provider_sync` üzerinden diğer worker'larla paylaşır. |
 | `internal/service` | İş kuralları: yazmadan önce doğrulama, sayfalama |
@@ -198,7 +200,7 @@ Veri akışı iki ayrı process'e bölünmüş durumda:
 | `internal/handler` | HTTP handler'ları, parametre doğrulama, tek tip hata formatı |
 | `internal/server` | Fiber uygulaması, route'lar, middleware'ler (request id, loglama, panic recovery) |
 | `internal/dashboard` | Web arayüzü (HTML + vanilla JS, binary'ye gömülü) |
-| `internal/database` | Bağlantı havuzu ve şema kurulumu |
+| `internal/database` | Bağlantı havuzu ve migration'ların uygulanması |
 | `internal/config` | Ortam değişkenleri ve `.env` |
 
 ### Bağımlılıklar tek yönde
@@ -219,7 +221,7 @@ Böylece her katman somut tipler döndürür, bağımlılıklar hep dıştan iç
 | **Fiber v3** | Günlük kullandığım framework. Hazır `requestid` middleware'i her isteğe loglarda takip için benzersiz bir kimlik veriyor, `recover` bir handler çökse bile sunucuyu ayakta tutuyor. Merkezi hata yakalayıcısı, bilinmeyen route'ları ve beklenmedik hataları da standart hata formatına çeviriyor. |
 | **PostgreSQL** | Ek bir arama motoruna gerek bırakmayan yerleşik full-text search (`tsvector`, `ts_rank`, GIN index). Tutarlılık için ACID transaction'lar, `ON CONFLICT` upsert, enum ve CHECK constraint'ler. |
 | **pgx (ORM yok)** | Arama sorgusu full-text search, `ts_rank` ve sorgu anında skor hesabı içeriyor. Bunlar bir ORM'de zaten ham SQL'e dönüşürdü. SQL'i doğrudan yazmak, ne çalıştığını görünür kılıyor. Kullanıcı girdisi her zaman parametre olarak gidiyor. |
-| **Tek dosyalık şema (`db.sql`)** | İki tablo var (`contents`, `provider_sync`). Versiyonlu bir migration aracı bu aşamada gereksiz karmaşıklık olurdu. `cmd/migrate` şemayı yalnızca yoksa uyguluyor. |
+| **goose (migration)** | Şema değişikliklerini veriyi silmeden uyguluyor. Uygulanan sürümleri kendi tablosunda tutuyor. Advisory lock ile aynı anda tek bir process'in migration çalıştırmasını sağlıyor. SQL dosyaları `embed` ile binary'ye gömülü. Kendi yazacağımız bir sürüm takibine göre daha az bakım gerektiriyor. |
 | **ozzo-validation** | "Tür video ise sadece video metrikleri dolu" gibi koşullu kuralları okunabilir şekilde ifade ediyor ve bütün hatalı alanları birlikte raporluyor. |
 | **golang.org/x/time/rate** | Provider başına token bucket rate limit. Standart ve eşzamanlı kullanıma güvenli. |
 | **log/slog** | Standart kütüphanede, yapılandırılmış JSON loglar. Ek bağımlılık yok. |
@@ -230,10 +232,10 @@ Böylece her katman somut tipler döndürür, bağımlılıklar hep dıştan iç
 
 ### Provider entegrasyonu
 
-- **Adaptör yapısı:** Her provider kendi paketinde bir adaptör: `Name()` ve `Fetch(ctx) ([]model.Content, error)`. Provider'ın JSON/XML şekli (`dto.go`) ve dönüşümü (`mapper.go`) paketin içinde gizli. Dışarıya sadece standart model çıkıyor.
+- **Adaptör yapısı:** Her provider kendi paketinde bir adaptör: `Name()` ve `Fetch(ctx) ([]model.Content, error)`. `Fetch` provider'ın bütün sayfalarını dolaşıyor ([Sayfalama](#sayfalama)). Provider'ın JSON/XML şekli (`dto.go`) ve dönüşümü (`mapper.go`) paketin içinde gizli. Dışarıya sadece standart model çıkıyor.
 - **Yeni provider eklemek:** Yeni bir adaptör paketi yazıp `cmd/ingest`'teki listeye bir satır eklemek yeterli. Ingest, service, repository ve API değişmez.
 - **Rate limit:** Her provider'ın kendi HTTP client'ı ve kendi limiter'ı var (varsayılan 2 istek/sn, `PROVIDER_RATE_LIMIT`). Bir provider'ın limiti diğerini etkilemiyor. Worker'da client bir kez oluşturulup bütün turlarda kullanıldığı için limit turlar arasında da korunuyor. Bir provider aynı anda tek bir worker'da çalıştığı için, worker sayısı artsa da limit aşılmıyor.
-  - Bugün bir tur tek bir istek olduğu için limit pratikte devreye girmiyor. Retry'lar arasındaki bekleme (500 ms'den başlayıp artıyor) de limitin istekler arasında bıraktığı süreden kısa değil. Limit, sayfalamalı bir provider'da, bir turun yüzlerce istek olduğu durumda önem kazanır ([Sayfalama](#sayfalama)).
+  - Bugün bir tur tek bir istek olduğu için limit pratikte devreye girmiyor. Retry'lar arasındaki bekleme (500 ms'den başlayıp artıyor) de limitin istekler arasında bıraktığı süreden kısa değil. Limit, çok sayfalı bir provider'da, bir turun yüzlerce istek olduğu durumda önem kazanır ([Sayfalama](#sayfalama)).
 - **Dayanıklılık:** İstek başına 5 sn timeout (`PROVIDER_TIMEOUT`). Ağ hatası, 5xx ve 429'da artan beklemeyle en fazla 3 retry (`PROVIDER_MAX_RETRIES`). 429'da `Retry-After` başlığına uyuluyor. 4xx'te retry yapılmıyor, çünkü sonucu değiştirmez. Context iptal edilince bekleme hemen bitiyor.
 - **Hata izolasyonu:**
   - Bir provider hata verirse diğerleri yine işleniyor. Hatalı provider'ın önceki verisi veritabanında korunuyor.
@@ -247,6 +249,17 @@ Böylece her katman somut tipler döndürür, bağımlılıklar hep dıştan iç
 - **İki katmanlı doğrulama:** Kayıtlar yazılmadan önce Go'da doğrulanıyor (`model.Content.Validate`). Ayrıca veritabanında da korunuyor:
   - `content_type` enum
   - "video ise sadece video metrikleri, article ise sadece article metrikleri dolu" CHECK constraint'i
+
+### Migration'lar
+
+Şema `migrations/` altındaki numaralı SQL dosyalarından kuruluyor ve [goose](https://github.com/pressly/goose) ile uygulanıyor. Uygulanan sürümler `goose_db_version` tablosunda tutuluyor. `cmd/migrate` (Docker Compose'daki `migrate` servisi) sadece henüz uygulanmamış dosyaları sırayla çalıştırıyor.
+
+- **Şema değişikliği = yeni dosya.** Tablo ya da kolon eklemek için bir sonraki numarayla dosya eklenir, örneğin `00003_add_contents_updated_at.sql`. İçinde `-- +goose Up` ve `-- +goose Down` bölümleri olur. Uygulanmış bir dosya düzenlenmez, çünkü tekrar çalıştırılmaz.
+- **Veri korunur.** Yeni bir migration mevcut veritabanına uygulanır, veritabanını silmeye gerek kalmaz.
+- **Eşzamanlı çalıştırma güvenli.** Bir PostgreSQL advisory lock, aynı anda başlayan process'lerden sadece birinin migration'ları uygulamasını sağlıyor. Diğerleri bekleyip zaten güncel olduğunu görüyor.
+- **`$$` içeren ifadeler** (ör. fonksiyonlar) `-- +goose StatementBegin` ve `-- +goose StatementEnd` arasına alınır, yoksa goose ifadeyi noktalı virgüllerden böler.
+
+`db.sql` ile kurulmuş eski bir veritabanında sürüm tablosu yok. Böyle bir veritabanı için bir kez `make db-reset` ya da `docker compose down -v` gerekir.
 
 ### Birden fazla ingest worker
 
@@ -332,18 +345,21 @@ Cache uygulanmadı. Case bir öneri istiyor, ve mevcut veri boyutunda cache'in f
 
 ## Ölçeklenirken ingest: sayfalama ve artımlı senkronizasyon
 
-Mevcut ingest mock provider'lara göre tasarlandı: tek bir istek, bütün veri, her turda baştan yazma. Gerçek ve büyük bir provider'da iki şeyin değişmesi gerekir.
+Ingest provider'ın bütün sayfalarını çekip her turda baştan yazıyor. Bu bölüm, bunun bugün nasıl çalıştığını ve büyük bir provider'da neyin değişmesi gerektiğini anlatıyor.
 
 ### Sayfalama
 
-Mock cevaplar sayfalama bilgisi taşıyor (provider1: `pagination.total/page/per_page`, provider2: `meta.total_count/current_page/items_per_page`). Ama `?page=2` isteğine de aynı dört kaydı dönüyorlar. Meta'ya güvenilseydi aynı sayfa 15 kez çekilirdi. Bu yüzden sayfalama uygulanmadı. Gerçek bir provider'da tasarım şöyle olurdu:
+Adaptörler provider'ın sayfalarını `?page=1, 2, ...` ile dolaşıyor (`internal/provider/paging`). Sayfalama bilgisi provider'ın formatının bir parçası: provider1'de `pagination.total/per_page`, provider2'de `meta.total_count/items_per_page`. Bu yüzden her adaptör kendi formatını okuyor, dolaşma ve durma kuralları ise ortak `paging.Collect` fonksiyonunda. Dışarıya yine sadece `model.Content` çıkıyor, `Fetch`'in imzası değişmedi.
 
-- **Sayfaları adaptör dolaşır.** Sayfalama provider'ın formatının bir parçası, bu yüzden adaptörün içinde kalır. Dışarıya yine sadece `model.Content` çıkar.
-- **Sayfa sayfa yazılır.** `Fetch`, bütün veriyi bellekte toplamak yerine sayfaları sırayla verir. Go 1.23'teki range-over-func ile örneğin `iter.Seq2[[]model.Content, error]` olarak. Ingest her sayfayı geldikçe upsert eder. Provider 100 bin kayıt dönse bile bellek kullanımı sabit kalır.
-- **Durma koşulu sadece meta'ya bırakılmaz.** Dönen kayıt sayısı sayfa boyutundan azsa, sayfa boşsa ya da `sayfa × sayfa boyutu ≥ toplam` ise durulur. Ayrıca bir üst sayfa sınırı konur. Mock'taki "her sayfada aynı veri" durumu gibi hatalı davranışlar sonsuz döngüye dönüşmez.
-- **Rate limit kendiliğinden işler.** Sayfa istekleri aynı client'tan geçtiği için limiter zaten provider başına uygulanıyor. Tur süresinin ingest aralığından kısa kalması izlenir: 500 sayfa, 2 istek/sn'de 250 saniye sürer.
-- **Offset yerine cursor tercih edilir.** Provider destekliyorsa (`next_cursor` gibi), sayfalar arasında veri eklenince kayıtların kayması ya da tekrar gelmesi önlenir.
-- **Yarıda kalan tur güvenlidir.** Bir sayfa retry'lara rağmen başarısız olursa o provider'ın turu durur. Yazılmış sayfalar kalır, çünkü upsert tekrar çalıştırılabilir. Tur "eksik" olarak işaretlenir. Aşağıdaki silme tespiti eksik turlarda yapılmaz.
+- **Durma koşulu sadece meta'ya bırakılmıyor.** Sayfa boşsa, dönen kayıt sayısı sayfa boyutundan azsa ya da `sayfa × sayfa boyutu ≥ toplam` ise duruluyor. Ayrıca 1.000 sayfalık bir üst sınır var. Sayfa boyutu bildirmeyen bir cevap tek sayfa sayılıyor.
+- **Mock'larla tek istek.** Mock'lar `total: 150` ve `per_page: 10` diyor ama 4 kayıt dönüyor, üstelik her sayfa numarasına aynı cevabı veriyor. Kısa ilk sayfa dolaşmayı bitiriyor. Meta'ya güvenilseydi aynı 4 kayıt 15 kez çekilirdi.
+- **Bir sayfa başarısız olursa bütün tur başarısız sayılıyor.** Sayfa retry'lara rağmen alınamazsa o provider'ın turu hata döner, hiçbir sayfa yazılmaz, önceki veri korunur ve hata `provider_sync.last_error`'a yazılır. İleride silme tespiti eklenirse, eksik sayfalarla yapılmaması için bu kural gerekli.
+- **Rate limit ve retry sayfa başına uygulanıyor.** Sayfa istekleri aynı client'tan geçiyor, bu yüzden limit ilk kez gerçekten devreye giriyor: 2 istek/sn'de 100 sayfa 50 saniye sürer. Tur `INGEST_RUN_TIMEOUT` süresine (varsayılan 2 dk) sığmalı, çok sayfalı bir provider için bu süre büyütülür.
+- **Bütün sayfalar bellekte toplanıp tek seferde yazılıyor.** Kayıt başına ~300–500 byte ile 10 bin kayıt birkaç MB. Worker aynı anda tek provider işlediği için en yüksek bellek kullanımı en büyük provider kadar.
+
+**Ölçek büyürse:**
+- **Sayfa sayfa yazma.** Yüz binlerce kayıtta `Fetch` bütün veriyi toplamak yerine sayfaları sırayla verir, örneğin Go 1.23'teki range-over-func ile `iter.Seq2[[]model.Content, error]` olarak. Ingest her sayfayı geldikçe upsert eder ve bellek kullanımı sabit kalır. Bunun bedeli, yarıda kalan bir turun bazı sayfaları yazmış olması. Upsert tekrar çalıştırılabilir olduğu için bu güvenli, ama o tur "eksik" olarak işaretlenmeli.
+- **Offset yerine cursor.** Provider destekliyorsa (`next_cursor` gibi), sayfalar arasında veri eklenince kayıtların kayması ya da tekrar gelmesi önlenir.
 
 ### Toplu yazma
 
@@ -384,11 +400,12 @@ Testler, en çok hata çıkabilecek yerlere yoğunlaştırıldı:
 |---|---|---|
 | `model` | Skor formülü (elle hesaplanmış değerlerle), sıfıra bölme, doğrulama kuralları | Tablo bazlı unit testler |
 | `provider/httpclient` | Retry (5xx, 429, 4xx'te retry yok), `Retry-After`, rate limit, paylaşılan limiter, timeout, context iptali | `httptest` sunucusu |
-| `provider/provider1`, `provider2` | Gerçek mock verinin decode'u ve dönüşümü, bozuk kayıtların atlanması, tarih ve süre dönüşümü, HTTP ve decode hataları | `testdata/` altındaki gerçek mock cevaplar |
+| `provider/paging` | Durma kuralları (kısa sayfa, boş sayfa, toplam, üst sınır, sayfa boyutu yok), mock'taki gibi çelişkili meta, başarısız sayfada bütün turun başarısız olması | Sahte sayfa fonksiyonu |
+| `provider/provider1`, `provider2` | Gerçek mock verinin decode'u ve dönüşümü, bozuk kayıtların atlanması, tarih ve süre dönüşümü, HTTP ve decode hataları, çok sayfalı dolaşma, mock'a tek istek | `testdata/` altındaki gerçek mock cevaplar, `httptest` sunucusu |
 | `ingest` | Bir provider ya da kayıt hatasında diğerlerinin devam etmesi, vadesi gelince tekrar çalışma, birden fazla worker'da her provider'ın bir kez çalışması, kapanışta yarım kalan provider'ın devredilmesi | Sahte provider, store ve scheduler |
 | `handler` | Parametre doğrulama, varsayılanlar, yanıt şekli, tek tip hata formatı | Sahte service, `app.Test` |
 | `server` | Panic → 500 (panic mesajı kullanıcıya gitmeden), JSON 404, dashboard ve dokümantasyon servisi | `app.Test` |
-| `repository` | Full-text search (kök bulma, yarım kelime, çok kelime, özel karakterler), alakalılık ve popülerlik sıralaması, bütün güncellik eşikleri, upsert, CHECK constraint ihlalinde bütün batch'in geri alınması, provider kiralama (eşzamanlı claim'de tek kazanan, süresi dolan kiranın devralınması, sonucun kaydı) | **Gerçek PostgreSQL**, şema her testte `db.sql`'den kuruluyor |
+| `repository` | Full-text search (kök bulma, yarım kelime, çok kelime, özel karakterler), alakalılık ve popülerlik sıralaması, bütün güncellik eşikleri, upsert, CHECK constraint ihlalinde bütün batch'in geri alınması, provider kiralama (eşzamanlı claim'de tek kazanan, süresi dolan kiranın devralınması, sonucun kaydı) | **Gerçek PostgreSQL**, şema her testte migration'lardan kuruluyor |
 
 - **Repository testleri** `integration` build tag'i arkasında (`make test-integration`). Test edilen şey SQL'in kendisi olduğu için sahteyle test edilemez. Geliştirme veritabanına dokunmamak için ayrı bir `searchly_test` veritabanı kullanıyorlar.
 - **Service katmanı** repository ile handler arasında ince bir geçiş olduğu için ayrıca test edilmiyor.
@@ -402,5 +419,4 @@ Bilinen ve bilinçli olarak bırakılmış durumlar:
 - **Önek eşleşmesi kısa kelimelerde geniş sonuç verir.** "go" araması "Google" gibi "go" ile başlayan kelimeleri de bulur. Tam eşleşmeler alakalılık sıralamasında önde tutulduğu için bunlar listenin altında kalır.
 - **`or`, `-kelime` ve `"tırnaklı ifade"` sözdizimi desteklenmez.** Önek eşleşmesi için bilinçli olarak bırakıldı. Bu karakterler sıradan ayraç olarak yok sayılır.
 - **Tek bir provider bölünmez.** Worker'lar provider'ları paylaşır ama bir provider'ın turu tek worker'da çalışır. Çok büyük tek bir provider için iş birimi "provider + sayfa aralığı" ya da cursor segmenti olarak küçültülebilir.
-- **Mevcut veritabanı otomatik güncellenmez.** `cmd/migrate` şema varsa atlıyor. `provider_sync` tablosundan önce oluşturulmuş bir veritabanı için `docker compose down -v` (ya da `make db-reset`) gerekir. Veri bir sonraki ingest'te yeniden gelir.
-- **Sayfalama ve artımlı ingest uygulanmadı.** Mock provider'lar sayfalama bilgisi döndürüyor ama her sayfa isteğine aynı veriyi dönüyor. Ingest her turda bütün veriyi baştan çekip yazıyor ve provider'dan silinen içerikleri fark etmiyor. Gerçek bir provider için tasarım: [Ölçeklenirken ingest](#ölçeklenirken-ingest-sayfalama-ve-artımlı-senkronizasyon).
+- **Artımlı ingest uygulanmadı.** Ingest her turda bütün sayfaları baştan çekip yazıyor ve provider'dan silinen içerikleri fark etmiyor. Gerçek bir provider için tasarım: [Ölçeklenirken ingest](#ölçeklenirken-ingest-sayfalama-ve-artımlı-senkronizasyon).

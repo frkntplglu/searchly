@@ -2,6 +2,13 @@ package provider2
 
 type response struct {
 	Items []item `xml:"items>item"`
+	Meta  meta   `xml:"meta"`
+}
+
+type meta struct {
+	TotalCount   int `xml:"total_count"`
+	CurrentPage  int `xml:"current_page"`
+	ItemsPerPage int `xml:"items_per_page"`
 }
 
 type item struct {

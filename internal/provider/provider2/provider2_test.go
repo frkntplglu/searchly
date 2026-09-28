@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/frkntplglu/searchly/internal/provider/httpclient"
@@ -92,5 +95,56 @@ func TestFetchErrors(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestFetchWalksPages(t *testing.T) {
+	var sample response
+	if err := xml.Unmarshal(readTestdata(t), &sample); err != nil {
+		t.Fatal(err)
+	}
+	all := sample.Items
+
+	const perPage = 3
+	var requested []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		requested = append(requested, page)
+		start, end := min((page-1)*perPage, len(all)), min(page*perPage, len(all))
+		body, err := xml.Marshal(response{Items: all[start:end], Meta: meta{TotalCount: len(all), CurrentPage: page, ItemsPerPage: perPage}})
+		if err != nil {
+			t.Error(err)
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	contents, err := New(srv.URL, httpclient.Config{}).Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(contents) != len(all) {
+		t.Errorf("got %d contents, want %d from both pages", len(contents), len(all))
+	}
+	if !slices.Equal(requested, []int{1, 2}) {
+		t.Errorf("requested pages %v, want [1 2]", requested)
+	}
+}
+
+func TestFetchStopsWhenPagesDoNotMatchTheReportedTotal(t *testing.T) {
+	var calls atomic.Int32
+	body := readTestdata(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	contents, err := New(srv.URL, httpclient.Config{}).Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 || len(contents) != 4 {
+		t.Fatalf("made %d requests for %d contents, want 1 request for 4", calls.Load(), len(contents))
 	}
 }

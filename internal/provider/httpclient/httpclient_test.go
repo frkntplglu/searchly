@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func TestGetRetries(t *testing.T) {
 			srv, calls := newServer(t, tt.statuses...)
 			c := New(srv.URL, Config{MaxRetries: 3, Backoff: time.Millisecond})
 
-			body, err := c.Get(context.Background())
+			body, err := c.Get(context.Background(), nil)
 
 			if got := calls.Load(); got != tt.wantCalls {
 				t.Errorf("calls = %d, want %d", got, tt.wantCalls)
@@ -78,7 +79,7 @@ func TestGetHonorsRetryAfter(t *testing.T) {
 	defer srv.Close()
 
 	start := time.Now()
-	if _, err := New(srv.URL, Config{MaxRetries: 1, Backoff: time.Millisecond}).Get(context.Background()); err != nil {
+	if _, err := New(srv.URL, Config{MaxRetries: 1, Backoff: time.Millisecond}).Get(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if elapsed := time.Since(start); elapsed < time.Second {
@@ -92,7 +93,7 @@ func TestRateLimit(t *testing.T) {
 
 	start := time.Now()
 	for range 4 {
-		if _, err := c.Get(context.Background()); err != nil {
+		if _, err := c.Get(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -110,10 +111,10 @@ func TestSharedLimiter(t *testing.T) {
 
 	start := time.Now()
 	for range 2 {
-		if _, err := a.Get(context.Background()); err != nil {
+		if _, err := a.Get(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.Get(context.Background()); err != nil {
+		if _, err := b.Get(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -134,7 +135,7 @@ func TestTimeoutIsRetriedThenFails(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := New(srv.URL, Config{Timeout: 20 * time.Millisecond, MaxRetries: 1, Backoff: time.Millisecond}).Get(context.Background())
+	_, err := New(srv.URL, Config{Timeout: 20 * time.Millisecond, MaxRetries: 1, Backoff: time.Millisecond}).Get(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected a timeout error")
 	}
@@ -150,10 +151,25 @@ func TestGetStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	if _, err := c.Get(ctx); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := c.Get(ctx, nil); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
 	if got := calls.Load(); got != 1 {
 		t.Errorf("calls = %d, want 1", got)
+	}
+}
+
+func TestGetAddsQuery(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = r.URL.RawQuery
+	}))
+	t.Cleanup(srv.Close)
+
+	if _, err := New(srv.URL+"/feed?lang=en", Config{}).Get(context.Background(), url.Values{"page": {"2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "lang=en&page=2" {
+		t.Errorf("query = %q, want the URL's own query plus page=2", got)
 	}
 }

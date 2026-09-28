@@ -29,11 +29,8 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Migrate applies the migrations that have not been applied yet, in order.
-// Applied versions are recorded in goose_db_version. A Postgres advisory lock
-// makes concurrent callers wait, so only one of them applies each migration.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	db := stdlib.OpenDBFromPool(pool) // closing it leaves the pool open
+	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
 
 	locker, err := lock.NewPostgresSessionLocker()

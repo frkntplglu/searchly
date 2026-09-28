@@ -3,7 +3,14 @@ package provider1
 import "encoding/json"
 
 type response struct {
-	Contents []content `json:"contents"`
+	Contents   []content  `json:"contents"`
+	Pagination pagination `json:"pagination"`
+}
+
+type pagination struct {
+	Total   int `json:"total"`
+	Page    int `json:"page"`
+	PerPage int `json:"per_page"`
 }
 
 type content struct {
