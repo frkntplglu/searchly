@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,8 +19,6 @@ import (
 	"github.com/frkntplglu/searchly/internal/repository"
 	"github.com/frkntplglu/searchly/internal/service"
 )
-
-const runTimeout = 2 * time.Minute
 
 func main() {
 	cfg := config.Load()
@@ -57,13 +56,27 @@ func run(cfg config.Config, interval time.Duration) error {
 	)
 
 	if interval <= 0 {
-		ctx, cancel := context.WithTimeout(ctx, runTimeout)
+		ctx, cancel := context.WithTimeout(ctx, cfg.IngestRunTimeout)
 		defer cancel()
 		return ingester.RunOnce(ctx)
 	}
 
-	slog.Info("ingest worker started", "interval", interval.String())
-	ingester.Run(ctx, interval)
+	syncRepo := repository.NewSyncRepository(db)
+	if err := syncRepo.Register(ctx, ingester.Names()); err != nil {
+		return err
+	}
+	host, _ := os.Hostname()
+	schedule := ingest.Schedule{
+		WorkerID: fmt.Sprintf("%s-%d", host, os.Getpid()),
+		Interval: interval,
+		Lease:    cfg.IngestRunTimeout,
+		Poll:     cfg.IngestPollInterval,
+	}
+
+	slog.Info("ingest worker started", "worker", schedule.WorkerID, "interval", interval.String())
+	if err := ingester.Run(ctx, syncRepo, schedule); err != nil {
+		return err
+	}
 	slog.Info("ingest worker stopped")
 	return nil
 }

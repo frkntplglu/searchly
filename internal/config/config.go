@@ -2,9 +2,11 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -24,6 +26,8 @@ type Config struct {
 	ProviderTimeout    time.Duration
 	ProviderMaxRetries int
 	IngestInterval     time.Duration
+	IngestRunTimeout   time.Duration
+	IngestPollInterval time.Duration
 }
 
 func Load() Config {
@@ -40,28 +44,44 @@ func Load() Config {
 		WriteTimeout:    10 * time.Second,
 		ShutdownTimeout: 10 * time.Second,
 
-		Provider1URL:       getEnv("PROVIDER1_URL", "https://raw.githubusercontent.com/WEG-Technology/mock/refs/heads/main/v2/provider1"),
-		Provider2URL:       getEnv("PROVIDER2_URL", "https://raw.githubusercontent.com/WEG-Technology/mock/refs/heads/main/v2/provider2"),
-		ProviderRateLimit:  2,
-		ProviderTimeout:    5 * time.Second,
-		ProviderMaxRetries: 3,
+		Provider1URL: getEnv("PROVIDER1_URL", "https://raw.githubusercontent.com/WEG-Technology/mock/refs/heads/main/v2/provider1"),
+		Provider2URL: getEnv("PROVIDER2_URL", "https://raw.githubusercontent.com/WEG-Technology/mock/refs/heads/main/v2/provider2"),
 
-		IngestInterval: getDuration("INGEST_INTERVAL", 0),
+		// 0 means no rate limit, no timeout and no retries respectively.
+		ProviderRateLimit:  getEnvAs("PROVIDER_RATE_LIMIT", 2.0, parseFloat, nonNegative),
+		ProviderTimeout:    getEnvAs("PROVIDER_TIMEOUT", 5*time.Second, time.ParseDuration, nonNegative),
+		ProviderMaxRetries: getEnvAs("PROVIDER_MAX_RETRIES", 3, strconv.Atoi, nonNegative),
+
+		IngestInterval:     getEnvAs("INGEST_INTERVAL", time.Duration(0), time.ParseDuration, nonNegative),
+		IngestRunTimeout:   getEnvAs("INGEST_RUN_TIMEOUT", 2*time.Minute, time.ParseDuration, positive),
+		IngestPollInterval: getEnvAs("INGEST_POLL_INTERVAL", 10*time.Second, time.ParseDuration, positive),
 	}
 }
 
-func getDuration(key string, fallback time.Duration) time.Duration {
+// getEnvAs parses the variable, falling back to the default when it is unset,
+// unparsable or not valid.
+func getEnvAs[T any](key string, fallback T, parse func(string) (T, error), valid func(T) bool) T {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
 		return fallback
 	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		slog.Warn("invalid duration, using default", "key", key, "value", v, "default", fallback.String())
+	parsed, err := parse(v)
+	if err != nil || !valid(parsed) {
+		slog.Warn("invalid value, using default", "key", key, "value", v, "default", fmt.Sprint(fallback))
 		return fallback
 	}
-	return d
+	return parsed
 }
+
+type number interface {
+	~int | ~int64 | ~float64
+}
+
+func nonNegative[T number](v T) bool { return v >= 0 }
+
+func positive[T number](v T) bool { return v > 0 }
+
+func parseFloat(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
 
 func getEnv(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {

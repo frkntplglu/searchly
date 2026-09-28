@@ -33,7 +33,7 @@ Bu komut sırasıyla:
 
 1. PostgreSQL'i başlatır ve sağlıklı olmasını bekler.
 2. Şemayı `db.sql`'den oluşturur. Şema zaten varsa bu adımı atlar, yani komut tekrar tekrar çalıştırılabilir.
-3. Ingest worker'ı başlatır: provider'lardan veriyi hemen çeker, sonra 5 dakikada bir tekrarlar.
+3. Ingest worker'ı başlatır: provider'lardan veriyi hemen çeker, sonra 5 dakikada bir tekrarlar. Worker'dan birden fazla kopya çalıştırılabilir: `docker compose up -d --scale ingest=3` ([Birden fazla ingest worker](#birden-fazla-ingest-worker)).
 4. API'yi başlatır.
 
 Ardından:
@@ -85,7 +85,14 @@ Ayarlar ortam değişkenlerinden okunur. Proje kökünde bir `.env` dosyası var
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | `json` | `json` ya da `text` |
 | `PROVIDER1_URL`, `PROVIDER2_URL` | Case'teki mock API'ler | Provider adresleri |
+| `PROVIDER_RATE_LIMIT` | `2` | Provider başına saniyede en fazla istek. `0` limitsiz. |
+| `PROVIDER_TIMEOUT` | `5s` | İstek başına timeout. `0` timeout yok. |
+| `PROVIDER_MAX_RETRIES` | `3` | Ağ hatası, 5xx ve 429'da en fazla retry. `0` retry yok. |
 | `INGEST_INTERVAL` | `0` (`make ingest` ve `cmd/ingest` için), `5m` (Docker Compose'da) | Ingest'in tekrar aralığı. `0` bir kez çalışıp çıkar. |
+| `INGEST_RUN_TIMEOUT` | `2m` | Bir provider turunun en uzun süresi. Worker'da aynı zamanda kiralama süresi: bu süreyi aşan provider'ı başka bir worker devralabilir. En uzun turdan uzun ve 5 saniyeden fazla olmalı. Worker turu, sonucu kira bitmeden yazabilmek için bu sürenin 5 saniye öncesinde keser. |
+| `INGEST_POLL_INTERVAL` | `10s` | Worker'ın vadesi gelmiş provider'lara bakma sıklığı. Bir provider en fazla bu kadar gecikmeyle başlar. |
+
+Geçersiz bir değer (ayrıştırılamayan, negatif ya da pozitif olması gerekirken `0`) uyarı loglanıp varsayılanla değiştirilir.
 
 ## API
 
@@ -185,7 +192,7 @@ Veri akışı iki ayrı process'e bölünmüş durumda:
 | `internal/model` | Provider'dan bağımsız `Content` modeli, doğrulama ve puan hesabı |
 | `internal/provider/httpclient` | Provider'lar için ortak HTTP: rate limit, timeout, retry |
 | `internal/provider/provider1`, `provider2` | Provider adaptörleri: istek, decode, `model.Content`'e dönüşüm |
-| `internal/ingest` | Provider'ları sırayla işler. Biri hata verirse diğerleri devam eder. |
+| `internal/ingest` | Provider'ları işler. Biri hata verirse diğerleri devam eder. Worker modunda provider'ları `provider_sync` üzerinden diğer worker'larla paylaşır. |
 | `internal/service` | İş kuralları: yazmadan önce doğrulama, sayfalama |
 | `internal/repository` | PostgreSQL erişimi: upsert, arama, skor ve alakalılık sorguları |
 | `internal/handler` | HTTP handler'ları, parametre doğrulama, tek tip hata formatı |
@@ -212,7 +219,7 @@ Böylece her katman somut tipler döndürür, bağımlılıklar hep dıştan iç
 | **Fiber v3** | Günlük kullandığım framework. Hazır `requestid` middleware'i her isteğe loglarda takip için benzersiz bir kimlik veriyor, `recover` bir handler çökse bile sunucuyu ayakta tutuyor. Merkezi hata yakalayıcısı, bilinmeyen route'ları ve beklenmedik hataları da standart hata formatına çeviriyor. |
 | **PostgreSQL** | Ek bir arama motoruna gerek bırakmayan yerleşik full-text search (`tsvector`, `ts_rank`, GIN index). Tutarlılık için ACID transaction'lar, `ON CONFLICT` upsert, enum ve CHECK constraint'ler. |
 | **pgx (ORM yok)** | Arama sorgusu full-text search, `ts_rank` ve sorgu anında skor hesabı içeriyor. Bunlar bir ORM'de zaten ham SQL'e dönüşürdü. SQL'i doğrudan yazmak, ne çalıştığını görünür kılıyor. Kullanıcı girdisi her zaman parametre olarak gidiyor. |
-| **Tek dosyalık şema (`db.sql`)** | Tek bir tablo var. Versiyonlu bir migration aracı bu aşamada gereksiz karmaşıklık olurdu. `cmd/migrate` şemayı yalnızca yoksa uyguluyor. |
+| **Tek dosyalık şema (`db.sql`)** | İki tablo var (`contents`, `provider_sync`). Versiyonlu bir migration aracı bu aşamada gereksiz karmaşıklık olurdu. `cmd/migrate` şemayı yalnızca yoksa uyguluyor. |
 | **ozzo-validation** | "Tür video ise sadece video metrikleri dolu" gibi koşullu kuralları okunabilir şekilde ifade ediyor ve bütün hatalı alanları birlikte raporluyor. |
 | **golang.org/x/time/rate** | Provider başına token bucket rate limit. Standart ve eşzamanlı kullanıma güvenli. |
 | **log/slog** | Standart kütüphanede, yapılandırılmış JSON loglar. Ek bağımlılık yok. |
@@ -225,8 +232,9 @@ Böylece her katman somut tipler döndürür, bağımlılıklar hep dıştan iç
 
 - **Adaptör yapısı:** Her provider kendi paketinde bir adaptör: `Name()` ve `Fetch(ctx) ([]model.Content, error)`. Provider'ın JSON/XML şekli (`dto.go`) ve dönüşümü (`mapper.go`) paketin içinde gizli. Dışarıya sadece standart model çıkıyor.
 - **Yeni provider eklemek:** Yeni bir adaptör paketi yazıp `cmd/ingest`'teki listeye bir satır eklemek yeterli. Ingest, service, repository ve API değişmez.
-- **Rate limit:** Her provider'ın kendi HTTP client'ı ve kendi limiter'ı var (varsayılan 2 istek/sn). Bir provider'ın limiti diğerini etkilemiyor. Worker'da client bir kez oluşturulup bütün turlarda kullanıldığı için limit turlar arasında da korunuyor.
-- **Dayanıklılık:** İstek başına 5 sn timeout. Ağ hatası, 5xx ve 429'da artan beklemeyle en fazla 3 retry. 429'da `Retry-After` başlığına uyuluyor. 4xx'te retry yapılmıyor, çünkü sonucu değiştirmez. Context iptal edilince bekleme hemen bitiyor.
+- **Rate limit:** Her provider'ın kendi HTTP client'ı ve kendi limiter'ı var (varsayılan 2 istek/sn, `PROVIDER_RATE_LIMIT`). Bir provider'ın limiti diğerini etkilemiyor. Worker'da client bir kez oluşturulup bütün turlarda kullanıldığı için limit turlar arasında da korunuyor. Bir provider aynı anda tek bir worker'da çalıştığı için, worker sayısı artsa da limit aşılmıyor.
+  - Bugün bir tur tek bir istek olduğu için limit pratikte devreye girmiyor. Retry'lar arasındaki bekleme (500 ms'den başlayıp artıyor) de limitin istekler arasında bıraktığı süreden kısa değil. Limit, sayfalamalı bir provider'da, bir turun yüzlerce istek olduğu durumda önem kazanır ([Sayfalama](#sayfalama)).
+- **Dayanıklılık:** İstek başına 5 sn timeout (`PROVIDER_TIMEOUT`). Ağ hatası, 5xx ve 429'da artan beklemeyle en fazla 3 retry (`PROVIDER_MAX_RETRIES`). 429'da `Retry-After` başlığına uyuluyor. 4xx'te retry yapılmıyor, çünkü sonucu değiştirmez. Context iptal edilince bekleme hemen bitiyor.
 - **Hata izolasyonu:**
   - Bir provider hata verirse diğerleri yine işleniyor. Hatalı provider'ın önceki verisi veritabanında korunuyor.
   - Geçersiz bir kayıt (bilinmeyen tür, bozuk tarih ya da süre, eksik alan) atlanıp loglanıyor, aynı cevaptaki diğer kayıtlar yazılıyor.
@@ -239,6 +247,19 @@ Böylece her katman somut tipler döndürür, bağımlılıklar hep dıştan iç
 - **İki katmanlı doğrulama:** Kayıtlar yazılmadan önce Go'da doğrulanıyor (`model.Content.Validate`). Ayrıca veritabanında da korunuyor:
   - `content_type` enum
   - "video ise sadece video metrikleri, article ise sadece article metrikleri dolu" CHECK constraint'i
+
+### Birden fazla ingest worker
+
+Worker'lar provider'ları kendi aralarında paylaşır. İş birimi "bütün tur" değil, "bir provider'ın bir turu". Zamanlama her worker'ın kendi ticker'ında değil, veritabanındaki `provider_sync` tablosunda tutuluyor:
+
+- **Kiralama:** Her worker 10 saniyede bir (`INGEST_POLL_INTERVAL`), vadesi gelmiş (`next_run_at <= now()`) ve kimsede olmayan bir provider'ı `UPDATE ... FOR UPDATE SKIP LOCKED` ile kiralar, çalıştırır ve bir sonraki çalışmayı `now() + aralık` olarak yazar. Vadesi gelmiş provider kalmayana kadar devam eder. `SKIP LOCKED` sayesinde eşzamanlı worker'lar birbirini beklemez ve aynı provider iki worker'a verilmez.
+- **Worker sayısı sıklığı değiştirmez, kapasiteyi artırır:** Kaç worker olursa olsun her provider 5 dakikada bir çalışır. Provider'lar boşta olan worker'lara dağılır. Provider sayısı artınca worker eklemek turu kısaltır.
+- **Çöken worker işi kilitlemez:** Kiralama süreli (`locked_until`, `INGEST_RUN_TIMEOUT`, varsayılan 2 dk). Süresi dolan provider'ı başka bir worker alır. Çalışma, sonucu kira bitmeden yazabilmek için bu süreden 5 saniye önce kesilir. Her kiralama yeni bir `claim_token` alır, işi bitirme de bu token'la eşleşir. İş bu arada yeniden kiralanmışsa eski çalışma sonucu yazmaz (`WHERE claim_token = $token`), sadece uyarı loglar. Aynı adla çalışan iki worker da bu yüzden birbirinin işine karışmaz. Nadiren iki worker aynı provider'ı birlikte çalıştırabilir. Upsert tekrar çalıştırılabilir olduğu için veri bozulmaz.
+- **Kapanışta iş devredilir:** `SIGTERM` ile yarıda kalan bir provider'ın kilidi bırakılır ve hemen vadesi gelmiş olarak işaretlenir. Başka bir worker kira süresini beklemeden devralır.
+- **Durum görünür:** `last_success_at` ve `last_error` her provider'ın son sonucunu gösterir.
+- **`make ingest` koordinasyonsuz:** Tek seferlik çalışma bütün provider'ları hemen işler, `provider_sync`'e bakmaz.
+
+Redis ya da bir mesaj kuyruğu yerine PostgreSQL kullanıldı, çünkü zaten var ve bu ölçekte `SKIP LOCKED` yeterli bir iş kuyruğu. Tek bir global advisory lock ise aynı anda tek worker çalıştırır, işi dağıtmaz.
 
 ### Yayın tarihleri gün hassasiyetinde saklanır
 
@@ -364,10 +385,10 @@ Testler, en çok hata çıkabilecek yerlere yoğunlaştırıldı:
 | `model` | Skor formülü (elle hesaplanmış değerlerle), sıfıra bölme, doğrulama kuralları | Tablo bazlı unit testler |
 | `provider/httpclient` | Retry (5xx, 429, 4xx'te retry yok), `Retry-After`, rate limit, paylaşılan limiter, timeout, context iptali | `httptest` sunucusu |
 | `provider/provider1`, `provider2` | Gerçek mock verinin decode'u ve dönüşümü, bozuk kayıtların atlanması, tarih ve süre dönüşümü, HTTP ve decode hataları | `testdata/` altındaki gerçek mock cevaplar |
-| `ingest` | Bir provider ya da kayıt hatasında diğerlerinin devam etmesi, periyodik çalışma, iptal | Sahte provider ve store |
+| `ingest` | Bir provider ya da kayıt hatasında diğerlerinin devam etmesi, vadesi gelince tekrar çalışma, birden fazla worker'da her provider'ın bir kez çalışması, kapanışta yarım kalan provider'ın devredilmesi | Sahte provider, store ve scheduler |
 | `handler` | Parametre doğrulama, varsayılanlar, yanıt şekli, tek tip hata formatı | Sahte service, `app.Test` |
 | `server` | Panic → 500 (panic mesajı kullanıcıya gitmeden), JSON 404, dashboard ve dokümantasyon servisi | `app.Test` |
-| `repository` | Full-text search (kök bulma, yarım kelime, çok kelime, özel karakterler), alakalılık ve popülerlik sıralaması, bütün güncellik eşikleri, upsert, CHECK constraint ihlalinde bütün batch'in geri alınması | **Gerçek PostgreSQL**, şema her testte `db.sql`'den kuruluyor |
+| `repository` | Full-text search (kök bulma, yarım kelime, çok kelime, özel karakterler), alakalılık ve popülerlik sıralaması, bütün güncellik eşikleri, upsert, CHECK constraint ihlalinde bütün batch'in geri alınması, provider kiralama (eşzamanlı claim'de tek kazanan, süresi dolan kiranın devralınması, sonucun kaydı) | **Gerçek PostgreSQL**, şema her testte `db.sql`'den kuruluyor |
 
 - **Repository testleri** `integration` build tag'i arkasında (`make test-integration`). Test edilen şey SQL'in kendisi olduğu için sahteyle test edilemez. Geliştirme veritabanına dokunmamak için ayrı bir `searchly_test` veritabanı kullanıyorlar.
 - **Service katmanı** repository ile handler arasında ince bir geçiş olduğu için ayrıca test edilmiyor.
@@ -380,5 +401,6 @@ Bilinen ve bilinçli olarak bırakılmış durumlar:
 - **Stop word'ler sadece yarım kelime olarak eşleşir.** `english` yapılandırması "the", "a" gibi kelimeleri yok sayar. Bu yüzden "the" araması `simple` vektörde "the" ile başlayan kelimeleri ("theory", "them") bulur, "The" kelimesinin kendisini alakalılıkta öne çıkarmaz.
 - **Önek eşleşmesi kısa kelimelerde geniş sonuç verir.** "go" araması "Google" gibi "go" ile başlayan kelimeleri de bulur. Tam eşleşmeler alakalılık sıralamasında önde tutulduğu için bunlar listenin altında kalır.
 - **`or`, `-kelime` ve `"tırnaklı ifade"` sözdizimi desteklenmez.** Önek eşleşmesi için bilinçli olarak bırakıldı. Bu karakterler sıradan ayraç olarak yok sayılır.
-- **Ingest tek instance için tasarlandı.** Worker birden fazla kopya çalıştırılırsa aynı veriyi paralel yazar. Upsert sayesinde veri bozulmaz ama iş tekrarlanır. Gerekirse PostgreSQL advisory lock ile aynı anda tek bir kopyanın çalışması sağlanabilir.
+- **Tek bir provider bölünmez.** Worker'lar provider'ları paylaşır ama bir provider'ın turu tek worker'da çalışır. Çok büyük tek bir provider için iş birimi "provider + sayfa aralığı" ya da cursor segmenti olarak küçültülebilir.
+- **Mevcut veritabanı otomatik güncellenmez.** `cmd/migrate` şema varsa atlıyor. `provider_sync` tablosundan önce oluşturulmuş bir veritabanı için `docker compose down -v` (ya da `make db-reset`) gerekir. Veri bir sonraki ingest'te yeniden gelir.
 - **Sayfalama ve artımlı ingest uygulanmadı.** Mock provider'lar sayfalama bilgisi döndürüyor ama her sayfa isteğine aynı veriyi dönüyor. Ingest her turda bütün veriyi baştan çekip yazıyor ve provider'dan silinen içerikleri fark etmiyor. Gerçek bir provider için tasarım: [Ölçeklenirken ingest](#ölçeklenirken-ingest-sayfalama-ve-artımlı-senkronizasyon).
